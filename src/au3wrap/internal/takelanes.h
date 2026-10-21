@@ -10,12 +10,14 @@
 #include "au3-registries/ClientData.h"
 #include "au3-xml/XMLTagHandler.h"
 
+#include <wx/string.h>
+
 class AudacityProject;
 class ChannelGroup;
 class WaveTrack;
 class XMLWriter;
 
-namespace au::record {
+namespace au::au3 {
 //! Take-lane membership of a wave track, attached to the track and saved in the project.
 //! A main track has a groupId and takeIndex 0; each preserved take is a separate,
 //! muted wave track sharing the groupId with takeIndex 1, 2, ...
@@ -51,6 +53,30 @@ WaveTrack* preserveAsTake(AudacityProject& project, WaveTrack& mainTrack,
 
 //! All take tracks of `mainTrack`, ordered by take index.
 std::vector<WaveTrack*> takesOf(AudacityProject& project, const WaveTrack& mainTrack);
+
+//! Main track of a take track (null if `track` is not a take or its main is gone)
+WaveTrack* mainOf(AudacityProject& project, const WaveTrack& track);
+
+//! Display name of take number `index` of a track called `mainName`
+wxString takeName(const wxString& mainName, int index);
+
+//! Rename all takes of `mainTrack` after it. Returns the renamed takes.
+std::vector<WaveTrack*> renameTakes(AudacityProject& project, const WaveTrack& mainTrack);
+
+//! Move the takes of `mainTrack` so they sit directly below it, in take order.
+//! Returns the takes whose position changed.
+std::vector<WaveTrack*> restackTakes(AudacityProject& project, const WaveTrack& mainTrack);
+
+//! Restack the takes of every main track in the project. Returns the takes that moved.
+std::vector<WaveTrack*> restackAllTakes(AudacityProject& project);
+
+//! True if `track` sits between a main track and that main's takes (i.e. would split a take group)
+bool splitsTakeGroup(AudacityProject& project, const WaveTrack& track);
+
+//! Cycle the audio through main and take lanes over the group's take range:
+//! forward: main <- take1 <- take2 ... <- takeN <- main; backward is the inverse.
+//! Returns false if `mainTrack` has no takes.
+bool cycleTakes(AudacityProject& project, WaveTrack& mainTrack, bool forward);
 
 //! Make `take` the active one: swap its audio region with the main track's, so the
 //! previously active audio becomes this take lane. Returns false if `take` is not a take of `mainTrack`.

@@ -54,6 +54,8 @@ set(MODULE_SRC
     ${CMAKE_CURRENT_LIST_DIR}/internal/projectthumbnail.h
     ${CMAKE_CURRENT_LIST_DIR}/internal/trackcolor.cpp
     ${CMAKE_CURRENT_LIST_DIR}/internal/trackcolor.h
+    ${CMAKE_CURRENT_LIST_DIR}/internal/takelanes.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/internal/takelanes.h
     )
 
 # ==================================

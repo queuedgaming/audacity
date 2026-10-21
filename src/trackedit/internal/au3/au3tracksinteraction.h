@@ -121,6 +121,7 @@ private:
     int trackPosition(const TrackId trackId);
     void moveTrack(const TrackId trackId, const TrackMoveDirection direction);
     void moveTrackTo(const TrackId trackId, int pos);
+    void restackTakeLanes();
 
     context::IPlaybackStatePtr playbackState() const;
 

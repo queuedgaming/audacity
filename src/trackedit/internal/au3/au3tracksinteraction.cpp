@@ -3,6 +3,8 @@
 */
 #include "au3tracksinteraction.h"
 
+#include "au3wrap/internal/takelanes.h"
+
 #include <algorithm>
 #include <cmath>
 
@@ -132,6 +134,13 @@ bool Au3TracksInteraction::changeTrackTitle(const TrackId trackId, const muse::S
 
     trackedit::ITrackeditProjectPtr prj = globalContext()->currentTrackeditProject();
     prj->notifyAboutTrackChanged(DomConverter::track(track));
+
+    // Take lanes follow their main track's name
+    if (auto* waveTrack = dynamic_cast<Au3WaveTrack*>(track)) {
+        for (auto* take : au3::takelanes::renameTakes(projectRef(), *waveTrack)) {
+            prj->notifyAboutTrackChanged(DomConverter::track(take));
+        }
+    }
 
     return true;
 }
@@ -790,10 +799,23 @@ muse::RetVal<au::trackedit::TrackId> Au3TracksInteraction::newLabelTrack(const m
     return muse::RetVal<TrackId>::make_ok(track->GetId());
 }
 
-bool Au3TracksInteraction::deleteTracks(const TrackIdList& trackIds)
+bool Au3TracksInteraction::deleteTracks(const TrackIdList& requestedTrackIds)
 {
     auto& project = projectRef();
     auto& tracks = Au3TrackList::Get(project);
+
+    // Deleting a main track also deletes its take lanes
+    TrackIdList trackIds = requestedTrackIds;
+    for (const auto& trackId : requestedTrackIds) {
+        if (auto* waveTrack = DomAccessor::findWaveTrack(project, Au3TrackId(trackId))) {
+            for (auto* take : au3::takelanes::takesOf(project, *waveTrack)) {
+                const TrackId takeId = take->GetId();
+                if (!muse::contains(trackIds, takeId)) {
+                    trackIds.push_back(takeId);
+                }
+            }
+        }
+    }
 
     TrackId focusedTrack = trackNavigationController()->focusedTrack();
     const auto prj = globalContext()->currentTrackeditProject();
@@ -1937,10 +1959,44 @@ void Au3TracksInteraction::moveTrack(const TrackId trackId, const TrackMoveDirec
         return;
     }
 
+    // Never leave a track between another track and its take lanes: step over the whole group
+    if (auto* waveTrack = dynamic_cast<Au3WaveTrack*>(au3Track)) {
+        while (au3::takelanes::splitsTakeGroup(project, *waveTrack)) {
+            if (direction == TrackMoveDirection::Up && tracks.CanMoveUp(*au3Track)) {
+                tracks.MoveUp(*au3Track);
+            } else if (direction == TrackMoveDirection::Down && tracks.CanMoveDown(*au3Track)) {
+                tracks.MoveDown(*au3Track);
+            } else {
+                break;
+            }
+        }
+    }
+    targetPosition = static_cast<int>(std::distance(tracks.begin(), tracks.Find(au3Track)));
+
     auto track = DomConverter::track(au3Track);
 
     trackedit::ITrackeditProjectPtr trackEdit = globalContext()->currentTrackeditProject();
     trackEdit->notifyAboutTrackMoved(track, targetPosition);
+
+    restackTakeLanes();
+}
+
+void Au3TracksInteraction::restackTakeLanes()
+{
+    // Take lanes follow their main track
+    auto& project = projectRef();
+    auto& tracks = Au3TrackList::Get(project);
+    const auto moved = au3::takelanes::restackAllTakes(project);
+    if (moved.empty()) {
+        return;
+    }
+    trackedit::ITrackeditProjectPtr trackEdit = globalContext()->currentTrackeditProject();
+    for (Au3WaveTrack* wt : tracks.Any<Au3WaveTrack>()) {
+        if (au3::TakeLaneInfo::Get(*wt).isInGroup()) {
+            trackEdit->notifyAboutTrackMoved(DomConverter::track(wt),
+                                             static_cast<int>(std::distance(tracks.begin(), tracks.Find(wt))));
+        }
+    }
 }
 
 void Au3TracksInteraction::moveTrackTo(const TrackId trackId, int to)
@@ -1980,6 +2036,8 @@ void Au3TracksInteraction::moveTrackTo(const TrackId trackId, int to)
 
     trackedit::ITrackeditProjectPtr trackEdit = globalContext()->currentTrackeditProject();
     trackEdit->notifyAboutTrackMoved(track, pos);
+
+    restackTakeLanes();
 }
 
 au::trackedit::TrackId Au3TracksInteraction::addWaveTrack(int numChannels)

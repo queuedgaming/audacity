@@ -3,7 +3,7 @@
 */
 
 #include "au3record.h"
-#include "takelanes.h"
+#include "au3wrap/internal/takelanes.h"
 
 #include <cfloat>
 
@@ -29,6 +29,8 @@
 #include "au3audioinput.h"
 #include "../../recorderrors.h"
 
+using namespace au::au3::takelanes;
+using au::au3::TakeLaneInfo;
 using namespace muse;
 using namespace muse::async;
 using namespace au::record;
@@ -767,7 +769,7 @@ Ret Au3Record::doRecord(Au3Project& project,
             }
 
             if (recordConfiguration()->keepTakesWhenRecordingOver()) {
-                if (auto snapshot = takelanes::snapshotFrom(*wt, t0)) {
+                if (auto snapshot = snapshotFrom(*wt, t0)) {
                     m_takeSnapshots[trackedit::TrackId(wt->GetId())] = TakeSnapshot { snapshot, t0 };
                 }
             }
@@ -1004,9 +1006,11 @@ void Au3Record::preserveOverwrittenTakes()
         }
         const double t0 = it->second.t0;
         const double t1 = clip->GetPlayEndTime();
-        if (Au3WaveTrack* take = takelanes::preserveAsTake(projectRef(), *track, *it->second.audio, t0, t1)) {
+        if (Au3WaveTrack* take = preserveAsTake(projectRef(), *track, *it->second.audio, t0, t1)) {
             if (auto prj = globalContext()->currentTrackeditProject()) {
-                prj->notifyAboutTrackAdded(DomConverter::track(take));
+                auto& tracks = Au3TrackList::Get(projectRef());
+                const int pos = static_cast<int>(std::distance(tracks.begin(), tracks.Find(take)));
+                prj->notifyAboutTrackInserted(DomConverter::track(take), pos);
             }
         }
         m_takeSnapshots.erase(it);

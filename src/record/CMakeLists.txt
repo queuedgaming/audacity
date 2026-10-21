@@ -35,8 +35,6 @@ target_sources(record PRIVATE
     internal/au3/au3audioinput.h
     internal/au3/au3record.cpp
     internal/au3/au3record.h
-    internal/au3/takelanes.cpp
-    internal/au3/takelanes.h
 )
 
 target_link_libraries(record PRIVATE

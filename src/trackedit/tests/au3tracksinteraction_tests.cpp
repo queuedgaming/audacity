@@ -20,6 +20,7 @@
 #include "interactive/tests/mocks/interactivemock.h"
 
 #include "au3wrap/internal/trackcolor.h"
+#include "au3wrap/internal/takelanes.h"
 #include "au3-realtime-effects/RealtimeEffectList.h"
 #include "au3-realtime-effects/RealtimeEffectState.h"
 #include "project/tests/mocks/dummyeffectinstancefactory.h"
@@ -1937,5 +1938,130 @@ TEST_F(Au3TracksInteractionTests, PasteClipAtStartOfItselfIntoExistingClipDoesNo
 
     // Cleanup
     removeTrack(trackId);
+}
+
+//! Take lanes: create a take of `mainId` covering its first half second of audio
+static au3::Au3WaveTrack* makeTakeOf(au3::Au3Project& project, TrackId mainId)
+{
+    auto* main = DomAccessor::findWaveTrack(project, au3::Au3TrackId(mainId));
+    const double s = main->GetStartTime();
+    auto snapshot = au3::takelanes::snapshotFrom(*main, s);
+    return au3::takelanes::preserveAsTake(project, *main, *snapshot, s, s + 0.5);
+}
+
+TEST_F(Au3TracksInteractionTests, TakeLanesNewTakesAreInsertedBelowTheirMainTrack)
+{
+    //! [GIVEN] main, other
+    const TrackId mainId = createTrack(TestTrackID::TRACK_TWO_CLIPS);
+    const TrackId otherId = createTrack(TestTrackID::TRACK_SMALL_SILENCE);
+
+    //! [WHEN] Two takes of main are created
+    auto* take1 = makeTakeOf(projectRef(), mainId);
+    auto* take2 = makeTakeOf(projectRef(), mainId);
+    ASSERT_TRUE(take1 && take2);
+
+    //! [THEN] main, take1, take2, other
+    EXPECT_EQ(TrackPosition(mainId), 0);
+    EXPECT_EQ(TrackPosition(take1->GetId()), 1);
+    EXPECT_EQ(TrackPosition(take2->GetId()), 2);
+    EXPECT_EQ(TrackPosition(otherId), 3);
+
+    removeTrack(take1->GetId());
+    removeTrack(take2->GetId());
+    removeTrack(mainId);
+    removeTrack(otherId);
+}
+
+TEST_F(Au3TracksInteractionTests, TakeLanesDeletingMainTrackDeletesItsTakes)
+{
+    const TrackId mainId = createTrack(TestTrackID::TRACK_TWO_CLIPS);
+    const TrackId otherId = createTrack(TestTrackID::TRACK_SMALL_SILENCE);
+    auto* take = makeTakeOf(projectRef(), mainId);
+    ASSERT_NE(take, nullptr);
+    const TrackId takeId = take->GetId();
+
+    //! [WHEN] Only the main track is deleted
+    m_tracksInteraction->deleteTracks({ mainId });
+
+    //! [THEN] Its take is gone as well, the unrelated track stays
+    EXPECT_EQ(DomAccessor::findTrack(projectRef(), au3::Au3TrackId(mainId)), nullptr);
+    EXPECT_EQ(DomAccessor::findTrack(projectRef(), au3::Au3TrackId(takeId)), nullptr);
+    EXPECT_NE(DomAccessor::findTrack(projectRef(), au3::Au3TrackId(otherId)), nullptr);
+
+    removeTrack(otherId);
+}
+
+TEST_F(Au3TracksInteractionTests, TakeLanesRenamingMainTrackRenamesTakes)
+{
+    const TrackId mainId = createTrack(TestTrackID::TRACK_TWO_CLIPS);
+    auto* take = makeTakeOf(projectRef(), mainId);
+    ASSERT_NE(take, nullptr);
+
+    m_tracksInteraction->changeTrackTitle(mainId, muse::String(u"Vocals"));
+
+    EXPECT_EQ(take->GetName(), wxString("Vocals - Take 1"));
+
+    removeTrack(take->GetId());
+    removeTrack(mainId);
+}
+
+TEST_F(Au3TracksInteractionTests, TakeLanesMovingMainTrackMovesItsTakes)
+{
+    //! [GIVEN] other, main, take
+    const TrackId otherId = createTrack(TestTrackID::TRACK_SMALL_SILENCE);
+    const TrackId mainId = createTrack(TestTrackID::TRACK_TWO_CLIPS);
+    auto* take = makeTakeOf(projectRef(), mainId);
+    ASSERT_NE(take, nullptr);
+    ASSERT_EQ(TrackPosition(take->GetId()), 2);
+
+    //! [WHEN] main is moved up
+    m_tracksInteraction->moveTracks({ mainId }, TrackMoveDirection::Up);
+
+    //! [THEN] main, take, other
+    EXPECT_EQ(TrackPosition(mainId), 0);
+    EXPECT_EQ(TrackPosition(take->GetId()), 1);
+    EXPECT_EQ(TrackPosition(otherId), 2);
+
+    //! [WHEN] main is moved to the bottom
+    m_tracksInteraction->moveTracks({ mainId }, TrackMoveDirection::Bottom);
+
+    //! [THEN] other, main, take
+    EXPECT_EQ(TrackPosition(otherId), 0);
+    EXPECT_EQ(TrackPosition(mainId), 1);
+    EXPECT_EQ(TrackPosition(take->GetId()), 2);
+
+    removeTrack(take->GetId());
+    removeTrack(mainId);
+    removeTrack(otherId);
+}
+
+TEST_F(Au3TracksInteractionTests, TakeLanesMovingAnotherTrackStepsOverTheWholeGroup)
+{
+    //! [GIVEN] main, take, other
+    const TrackId mainId = createTrack(TestTrackID::TRACK_TWO_CLIPS);
+    const TrackId otherId = createTrack(TestTrackID::TRACK_SMALL_SILENCE);
+    auto* take = makeTakeOf(projectRef(), mainId);
+    ASSERT_NE(take, nullptr);
+    ASSERT_EQ(TrackPosition(otherId), 2);
+
+    //! [WHEN] other is moved up once
+    m_tracksInteraction->moveTracks({ otherId }, TrackMoveDirection::Up);
+
+    //! [THEN] it does not land between main and its take: other, main, take
+    EXPECT_EQ(TrackPosition(otherId), 0);
+    EXPECT_EQ(TrackPosition(mainId), 1);
+    EXPECT_EQ(TrackPosition(take->GetId()), 2);
+
+    //! [WHEN] other is moved down once
+    m_tracksInteraction->moveTracks({ otherId }, TrackMoveDirection::Down);
+
+    //! [THEN] main, take, other
+    EXPECT_EQ(TrackPosition(mainId), 0);
+    EXPECT_EQ(TrackPosition(take->GetId()), 1);
+    EXPECT_EQ(TrackPosition(otherId), 2);
+
+    removeTrack(take->GetId());
+    removeTrack(mainId);
+    removeTrack(otherId);
 }
 }

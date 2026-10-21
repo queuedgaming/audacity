@@ -7,7 +7,7 @@
 #include <gmock/gmock.h>
 
 #include "../internal/au3/au3record.h"
-#include "../internal/au3/takelanes.h"
+#include "au3wrap/internal/takelanes.h"
 
 #include "au3-xml/XMLWriter.h"
 
@@ -18,6 +18,7 @@
 #include "project/tests/testtools.h"
 #include "trackedit/tests/mocks/selectioncontrollermock.h"
 #include "trackedit/tests/mocks/trackeditprojectmock.h"
+#include "trackedit/tests/mocks/projecthistorymock.h"
 
 #include "au3audio/tests/mocks/audioenginemock.h"
 #include "audio/tests/mocks/audiodrivercontrollermock.h"
@@ -66,6 +67,8 @@ public:
         m_record->audioEngine.set(m_audioEngine);
         m_record->recordConfiguration.set(m_recordConfiguration);
         m_record->audioDriverController.set(m_audioDriverController);
+        m_projectHistory = std::make_shared<NiceMock<trackedit::ProjectHistoryMock> >();
+        m_record->projectHistory.set(m_projectHistory);
 
         ON_CALL(*m_globalContext, currentProject())
         .WillByDefault(Return(m_currentProject));
@@ -175,6 +178,7 @@ public:
     }
 
     std::shared_ptr<Au3Record> m_record;
+    std::shared_ptr<trackedit::ProjectHistoryMock> m_projectHistory;
 
     std::shared_ptr<context::GlobalContextMock> m_globalContext;
     std::shared_ptr<muse::actions::ActionsDispatcherMock> m_dispatcher;
@@ -346,6 +350,8 @@ TEST_F(Au3RecordTests, RecordingWithBusyEngineStartsUnpausedAtPlayhead)
 }
 
 namespace au::record {
+using au::au3::TakeLaneInfo;
+namespace takelanes = au::au3::takelanes;
 TEST_F(Au3RecordTests, TakeLanesPreserveOverwrittenRegionAsMutedTake)
 {
     //! [GIVEN] A track with 10s of audio (value 1) and a snapshot taken before recording at 2s
@@ -454,5 +460,53 @@ TEST_F(Au3RecordTests, TakeLaneInfoIsSavedWithTheTrackAndSurvivesCopies)
     auto* copy = copyHolder.get();
     EXPECT_EQ(TakeLaneInfo::Get(*copy).groupId, group);
     EXPECT_EQ(TakeLaneInfo::Get(*copy).takeIndex, 1);
+}
+
+//! main (value 1) with take1 (value 2) and take2 (value 3), all over [2s, 5s]
+struct ThreeLanes {
+    Au3WaveTrack* main;
+    Au3WaveTrack* take1;
+    Au3WaveTrack* take2;
+};
+
+static void fillRegion(Au3WaveTrack& lane, Au3WaveTrack& source)
+{
+    auto audio = std::static_pointer_cast<Au3WaveTrack>(source.Copy(0.0, 3.0, false));
+    lane.ClearAndPaste(2.0, 5.0, *audio);
+}
+
+TEST_F(Au3RecordTests, TakeLanesCycleRotatesTheLanes)
+{
+    Au3WaveTrack* main = addFilledTrack(0.0, 10.0, 1.0f);
+    auto snapshot = takelanes::snapshotFrom(*main, 2.0);
+    Au3WaveTrack* take1 = takelanes::preserveAsTake(projectRef(), *main, *snapshot, 2.0, 5.0);
+    Au3WaveTrack* take2 = takelanes::preserveAsTake(projectRef(), *main, *snapshot, 2.0, 5.0);
+    fillRegion(*take1, *addFilledTrack(0.0, 3.0, 2.0f));
+    fillRegion(*take2, *addFilledTrack(0.0, 3.0, 3.0f));
+
+    //! [WHEN] Next take: main plays take 1, take 1 gets take 2, take 2 gets the old main
+    ASSERT_TRUE(takelanes::cycleTakes(projectRef(), *main, true));
+    EXPECT_FLOAT_EQ(sampleAt(*main, 3.0), 2.0f);
+    EXPECT_FLOAT_EQ(sampleAt(*take1, 3.0), 3.0f);
+    EXPECT_FLOAT_EQ(sampleAt(*take2, 3.0), 1.0f);
+    EXPECT_FLOAT_EQ(sampleAt(*main, 7.0), 1.0f);
+
+    //! [WHEN] Previous take undoes the rotation
+    ASSERT_TRUE(takelanes::cycleTakes(projectRef(), *main, false));
+    EXPECT_FLOAT_EQ(sampleAt(*main, 3.0), 1.0f);
+    EXPECT_FLOAT_EQ(sampleAt(*take1, 3.0), 2.0f);
+    EXPECT_FLOAT_EQ(sampleAt(*take2, 3.0), 3.0f);
+}
+
+TEST_F(Au3RecordTests, TakeLanesFollowMainTrackName)
+{
+    Au3WaveTrack* main = addFilledTrack(0.0, 10.0, 1.0f);
+    auto snapshot = takelanes::snapshotFrom(*main, 2.0);
+    Au3WaveTrack* take = takelanes::preserveAsTake(projectRef(), *main, *snapshot, 2.0, 5.0);
+    main->SetName("Lead");
+    auto renamed = takelanes::renameTakes(projectRef(), *main);
+    ASSERT_EQ(renamed.size(), 1u);
+    EXPECT_EQ(take->GetName(), wxString("Lead - Take 1"));
+    EXPECT_EQ(takelanes::mainOf(projectRef(), *take), main);
 }
 }
