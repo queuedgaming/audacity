@@ -765,6 +765,20 @@ TEST_F(Au3RecordTests, ClipFadesAreSavedWithTheProjectAndUndoable)
     EXPECT_FALSE(history.UndoAvailable());
 }
 
+TEST_F(Au3RecordTests, SetClipFadesClampsToTheClipWithoutOverlap)
+{
+    Au3WaveTrack* track = addFilledTrack(0.0, 2.0, 1.0f);
+    auto clip = *track->Intervals().begin();
+    const trackedit::ClipKey key { track->GetId(), clip->GetId() };
+    EXPECT_CALL(*m_projectHistory, pushHistoryState(_, _)).Times(2);
+    ASSERT_TRUE(m_record->setClipFades(key, 5.0, 0.0, 0));
+    EXPECT_DOUBLE_EQ(clip->GetFadeInDuration(), 2.0);
+    ASSERT_TRUE(m_record->setClipFades(key, 1.5, 1.5, 0));
+    EXPECT_DOUBLE_EQ(clip->GetFadeInDuration(), 1.5);
+    EXPECT_DOUBLE_EQ(clip->GetFadeOutDuration(), 0.5);
+    EXPECT_FALSE(m_record->setClipFades(key, -1.0, 0.0, 0));
+}
+
 TEST_F(Au3RecordTests, SplittingAClipKeepsFadesOnTheOuterEdges)
 {
     Au3WaveTrack* track = addFilledTrack(0.0, 2.0, 1.0f);

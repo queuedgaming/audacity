@@ -27,6 +27,13 @@ Rectangle {
     property real fadeIn: 0
     property real fadeOut: 0
     property int fadeCurve: 0
+    //! While a fade handle is dragged: the previewed lengths (seconds), otherwise -1
+    property real previewFadeIn: -1
+    property real previewFadeOut: -1
+    property int previewFadeCurve: -1
+    readonly property real shownFadeIn: previewFadeIn >= 0 ? previewFadeIn : fadeIn
+    readonly property real shownFadeOut: previewFadeOut >= 0 ? previewFadeOut : fadeOut
+    readonly property int shownFadeCurve: previewFadeCurve >= 0 ? previewFadeCurve : fadeCurve
     property int speedPercentage: 0
     property bool isSpeedModified: false
     property bool showChannelSplitter: false
@@ -882,12 +889,17 @@ Rectangle {
             //! Shades the part of the clip a fade attenuates and draws its gain curve
             anchors.fill: viewsColumn
             z: viewsColumn.z + 1
-            visible: !root.collapsed && (root.fadeIn > 0 || root.fadeOut > 0)
+            visible: !root.collapsed && (root.shownFadeIn > 0 || root.shownFadeOut > 0)
             enabled: false
 
             readonly property real pxPerSec: root.context ? root.context.zoom : 0
-            readonly property real inWidth: Math.min(width, root.fadeIn * pxPerSec)
-            readonly property real outWidth: Math.min(width, root.fadeOut * pxPerSec)
+            //! The item only spans the visible part of long clips: where the real clip edges are
+            readonly property real clipStartPx: (waveView.startTime - waveView.itemStartTime) * pxPerSec
+            readonly property real clipEndPx: (waveView.endTime - waveView.itemStartTime) * pxPerSec
+            onClipStartPxChanged: requestPaint()
+            onClipEndPxChanged: requestPaint()
+            readonly property real inWidth: Math.min(clipEndPx - clipStartPx, root.shownFadeIn * pxPerSec)
+            readonly property real outWidth: Math.min(clipEndPx - clipStartPx, root.shownFadeOut * pxPerSec)
 
             onInWidthChanged: requestPaint()
             onOutWidthChanged: requestPaint()
@@ -896,11 +908,11 @@ Rectangle {
             onVisibleChanged: requestPaint()
             Connections {
                 target: root
-                function onFadeCurveChanged() { fadeOverlay.requestPaint() }
+                function onShownFadeCurveChanged() { fadeOverlay.requestPaint() }
             }
 
             function gain(x) {
-                return root.fadeCurve === 1 ? Math.sin(x * Math.PI / 2) : x
+                return root.shownFadeCurve === 1 ? Math.sin(x * Math.PI / 2) : x
             }
 
             function drawFade(ctx, x0, w, rising) {
@@ -935,8 +947,92 @@ Rectangle {
             onPaint: {
                 const ctx = getContext("2d")
                 ctx.reset()
-                drawFade(ctx, 0, inWidth, true)
-                drawFade(ctx, width - outWidth, outWidth, false)
+                drawFade(ctx, clipStartPx, inWidth, true)
+                drawFade(ctx, clipEndPx - outWidth, outWidth, false)
+            }
+        }
+
+        Repeater {
+            //! Draggable fade handles: small squares at the top corners of the clip body, sitting at
+            //! the end of the fade-in / start of the fade-out. Drag horizontally to set the length
+            //! (live preview, one undo step on release); hold Shift on release to toggle the curve.
+            //! The Fades submenu of the clip context menu is the keyboard/accessible alternative.
+            model: root.collapsed || !root.isWaveformViewVisible ? 0 : 2
+
+            delegate: Rectangle {
+                id: fadeHandle
+
+                required property int index
+                readonly property bool isIn: index === 0
+                readonly property bool active: handleArea.containsMouse || handleArea.pressed
+
+                readonly property real fadePx: (isIn ? root.shownFadeIn : root.shownFadeOut) * fadeOverlay.pxPerSec
+                readonly property real size: 10
+
+                readonly property real centre: isIn ? fadeOverlay.clipStartPx + fadePx : fadeOverlay.clipEndPx - fadePx
+                readonly property bool onScreen: centre >= -size && centre <= viewsColumn.width + size
+                x: isIn ? Math.max(fadeOverlay.clipStartPx + 1, Math.min(fadeOverlay.clipEndPx - size - 1, centre - size / 2))
+                        : Math.min(fadeOverlay.clipEndPx - size - 1, Math.max(fadeOverlay.clipStartPx + 1, centre - size / 2))
+                y: viewsColumn.y + 1
+                z: fadeOverlay.z + 10
+                width: size
+                height: size
+                radius: 2
+                visible: onScreen && (root.hover || handleArea.containsMouse || handleArea.pressed || (isIn ? root.fadeIn > 0 : root.fadeOut > 0) && root.clipSelected)
+                color: active ? "#ffffff" : Qt.rgba(1, 1, 1, 0.75)
+                border.color: Qt.rgba(0, 0, 0, 0.6)
+                border.width: 1
+
+                MouseArea {
+                    id: handleArea
+
+                    anchors.fill: parent
+                    anchors.margins: -3
+                    hoverEnabled: true
+                    preventStealing: true
+                    acceptedButtons: Qt.LeftButton
+                    cursorShape: Qt.SizeHorCursor
+
+                    property real pressX: 0
+                    property real startIn: 0
+                    property real startOut: 0
+
+                    onPressed: function (e) {
+                        pressX = mapToItem(root, e.x, e.y).x
+                        startIn = root.fadeIn
+                        startOut = root.fadeOut
+                        root.previewFadeIn = root.fadeIn
+                        root.previewFadeOut = root.fadeOut
+                        root.previewFadeCurve = root.fadeCurve
+                        e.accepted = true
+                    }
+
+                    onPositionChanged: function (e) {
+                        if (!pressed || fadeOverlay.pxPerSec <= 0) {
+                            return
+                        }
+                        const dxSec = (mapToItem(root, e.x, e.y).x - pressX) / fadeOverlay.pxPerSec
+                        const f = singleClipContextMenuModel.fadeDragPreview(fadeHandle.isIn, startIn, startOut, dxSec)
+                        root.previewFadeIn = f.x
+                        root.previewFadeOut = f.y
+                        root.previewFadeCurve = (e.modifiers & Qt.ShiftModifier) ? (root.fadeCurve === 1 ? 0 : 1) : root.fadeCurve
+                    }
+
+                    onReleased: function (e) {
+                        const toggle = (e.modifiers & Qt.ShiftModifier) !== 0
+                        const fin = root.previewFadeIn, fout = root.previewFadeOut
+                        root.previewFadeIn = -1
+                        root.previewFadeOut = -1
+                        root.previewFadeCurve = -1
+                        singleClipContextMenuModel.applyFadeDrag(fin, fout, root.fadeCurve, toggle)
+                    }
+
+                    onCanceled: {
+                        root.previewFadeIn = -1
+                        root.previewFadeOut = -1
+                        root.previewFadeCurve = -1
+                    }
+                }
             }
         }
 

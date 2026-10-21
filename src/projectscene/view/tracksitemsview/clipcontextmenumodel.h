@@ -3,6 +3,8 @@
 */
 #pragma once
 
+#include <QPointF>
+
 #include "context/iglobalcontext.h"
 #include "uicomponents/qml/Muse/UiComponents/abstractmenumodel.h"
 
@@ -26,6 +28,11 @@ public:
 
     Q_INVOKABLE void load() override;
     Q_INVOKABLE void handleMenuItem(const QString& itemId) override;
+
+    //! Fade handle dragging: live preview (no undo step) and the final value (one undo step).
+    //! Returns QPointF(fadeIn, fadeOut) in seconds, clamped to the clip.
+    Q_INVOKABLE QPointF fadeDragPreview(bool fadeInHandle, double startIn, double startOut, double dxSec) const;
+    Q_INVOKABLE void applyFadeDrag(double fadeIn, double fadeOut, int startCurve, bool toggleCurve);
 
     ClipKey clipKey() const;
     void setClipKey(const ClipKey& newClipKey);

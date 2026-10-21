@@ -2,6 +2,7 @@
 * Audacity: A Digital Audio Editor
 */
 #include "clipcontextmenumodel.h"
+#include "fadehandles.h"
 
 #include <cmath>
 
@@ -365,4 +366,20 @@ void ClipContextMenuModel::handleMenuItem(const QString& itemId)
         curve = curve == 1 ? 0 : 1;
     }
     record()->setClipFades(m_clipKey.key, fadeIn, fadeOut, curve);
+}
+
+QPointF ClipContextMenuModel::fadeDragPreview(bool fadeInHandle, double startIn, double startOut, double dxSec) const
+{
+    double length = 0.0;
+    if (auto prj = globalContext()->currentTrackeditProject()) {
+        const trackedit::Clip clip = prj->clip(m_clipKey.key);
+        length = clip.endTime - clip.startTime;
+    }
+    const auto f = fadehandles::drag({ startIn, startOut }, length, fadeInHandle, dxSec);
+    return QPointF(f.in, f.out);
+}
+
+void ClipContextMenuModel::applyFadeDrag(double fadeIn, double fadeOut, int startCurve, bool toggleCurve)
+{
+    record()->setClipFades(m_clipKey.key, fadeIn, fadeOut, fadehandles::curveAfterDrag(startCurve, toggleCurve));
 }
