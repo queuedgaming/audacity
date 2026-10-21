@@ -108,7 +108,7 @@ struct AutoCompChoice {
     int lane = 0;
 };
 std::vector<AutoCompChoice> autoComp(AudacityProject& project, WaveTrack& mainTrack, double minSegmentSec,
-                                     double crossfade);
+                                     double crossfade, bool pitchScoring = true);
 
 //! Label for comped regions of take number `index` ("Take N")
 wxString compLabel(int index);

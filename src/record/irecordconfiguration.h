@@ -58,6 +58,11 @@ public:
     virtual void setAutoCompSegmentLength(double seconds) = 0;
     virtual muse::async::Notification autoCompSegmentLengthChanged() const = 0;
 
+    //! Auto-comp: also score pitch stability, intonation and missed notes
+    virtual bool autoCompPitchScoring() const = 0;
+    virtual void setAutoCompPitchScoring(bool enabled) = 0;
+    virtual muse::async::Notification autoCompPitchScoringChanged() const = 0;
+
     virtual RecordingTrackNameOptions recordingTrackNameOptions() const = 0;
 };
 }

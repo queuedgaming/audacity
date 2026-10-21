@@ -23,6 +23,7 @@ class RecordingPreferencesModel : public QObject, public muse::async::Asyncable
     Q_PROPERTY(double crossfadeDuration READ crossfadeDuration NOTIFY crossfadeDurationChanged)
     Q_PROPERTY(bool punchOutAtSelectionEnd READ punchOutAtSelectionEnd WRITE setPunchOutAtSelectionEnd NOTIFY punchOutAtSelectionEndChanged)
     Q_PROPERTY(double autoCompSegmentLength READ autoCompSegmentLength NOTIFY autoCompSegmentLengthChanged)
+    Q_PROPERTY(bool autoCompPitchScoring READ autoCompPitchScoring WRITE setAutoCompPitchScoring NOTIFY autoCompPitchScoringChanged)
     Q_PROPERTY(bool keepTakesWhenRecordingOver READ keepTakesWhenRecordingOver WRITE setKeepTakesWhenRecordingOver NOTIFY keepTakesWhenRecordingOverChanged)
 
     muse::GlobalInject<record::IRecordConfiguration> recordConfiguration;
@@ -48,6 +49,9 @@ public:
     double autoCompSegmentLength() const;
     Q_INVOKABLE void setAutoCompSegmentLength(double seconds);
 
+    bool autoCompPitchScoring() const;
+    void setAutoCompPitchScoring(bool enabled);
+
     bool keepTakesWhenRecordingOver() const;
     void setKeepTakesWhenRecordingOver(bool enabled);
 
@@ -59,5 +63,6 @@ signals:
     void punchOutAtSelectionEndChanged();
     void keepTakesWhenRecordingOverChanged();
     void autoCompSegmentLengthChanged();
+    void autoCompPitchScoringChanged();
 };
 }

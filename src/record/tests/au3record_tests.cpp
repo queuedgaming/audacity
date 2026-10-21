@@ -4,6 +4,8 @@
 #include "au3-project-history/ProjectHistory.h"
 #include "au3-project-history/UndoManager.h"
 #include <cfloat>
+#include <chrono>
+#include <iostream>
 #include <cmath>
 #include <set>
 
@@ -708,6 +710,37 @@ std::vector<float> concat(std::initializer_list<std::vector<float> > parts)
 }
 
 std::vector<float> gap(double seconds) { return std::vector<float>(size_t(seconds * AC_RATE), 0.0f); }
+
+//! Sine at `hz` shifted by `cents`; motion 0 steady, 1 wobbly/jittery (random +-40 cent steps every 12 ms,
+//! linearly interpolated), 2 vibrato (6 Hz, +-50 cents)
+std::vector<float> tone(double seconds, double hz, double cents, int motion, float amp = 0.4f, double rate = AC_RATE,
+                        unsigned seed = 1, float noiseAmp = 0.0f)
+{
+    std::vector<float> x(size_t(seconds * rate));
+    unsigned state = seed * 2654435761u + 7u;
+    auto rnd = [&state]() {
+        state = state * 1664525u + 1013904223u;
+        return double((state >> 8) & 0xFFFF) / 32768.0 - 1.0;
+    };
+    const size_t step = size_t(0.012 * rate);
+    double prevOff = 0.0, nextOff = motion == 1 ? 40.0 * rnd() : 0.0, phase = 0.0;
+    for (size_t i = 0; i < x.size(); ++i) {
+        double off = cents;
+        if (motion == 1) {
+            if (i % step == 0) {
+                prevOff = nextOff;
+                nextOff = 40.0 * rnd();
+            }
+            const double a = double(i % step) / double(step);
+            off += prevOff + (nextOff - prevOff) * a;
+        } else if (motion == 2) {
+            off += 50.0 * std::sin(2.0 * M_PI * 6.0 * double(i) / rate);
+        }
+        phase += 2.0 * M_PI * hz * std::pow(2.0, off / 1200.0) / rate;
+        x[i] = amp * float(std::sin(phase)) + noiseAmp * float(rnd());
+    }
+    return x;
+}
 }
 
 TEST(AutoCompTests, ScoresPenaliseClippingNoiseLowLevelAndDropouts)
@@ -825,6 +858,7 @@ TEST_F(Au3RecordTests, AutoCompAppliesChoicesAsOneUndoStep)
     put(*take1, *t1src);
     put(*take2, *t2src);
     ON_CALL(*m_recordConfiguration, autoCompSegmentLength()).WillByDefault(Return(1.5));
+    ON_CALL(*m_recordConfiguration, autoCompPitchScoring()).WillByDefault(Return(true));
     EXPECT_TRUE(m_record->canSwitchTake(main->GetId(), TakeSwitch::AutoComp));
 
     auto& history = ::ProjectHistory::Get(projectRef());
@@ -860,21 +894,25 @@ TEST_F(Au3RecordTests, AutoCompAppliesChoicesAsOneUndoStep)
 //! Not a test: writes /workspace/autocomp_demo.aup4 with visibly different takes for screenshots
 TEST_F(Au3RecordTests, DISABLED_MakeAutoCompDemoProject)
 {
-    auto makeTrack = [this](const std::vector<float>& data8k) {
-        std::vector<float> x(size_t(data8k.size() * TEST_SAMPLE_RATE / AC_RATE));
-        for (size_t i = 0; i < x.size(); ++i) {
-            x[i] = data8k[std::min(data8k.size() - 1, size_t(double(i) * AC_RATE / TEST_SAMPLE_RATE))];
-        }
+    auto makeTrack = [this](const std::vector<float>& x) {
         auto* t = addSelectedMonoTrack();
         t->Append(0, reinterpret_cast<constSamplePtr>(x.data()), floatSample, x.size());
         t->Flush();
         return t;
     };
-    // Main (current take): noisy / clipped / quiet; take 1 and take 2 are clean in different phrases
-    Au3WaveTrack* main = makeTrack(concat({ phrase(2.0, 2, 1), gap(0.5), phrase(2.0, 1), gap(0.5), phrase(2.0, 3) }));
+    // All clean (no noise or clipping): only pitch tells the takes apart. Levels differ so lanes look different.
+    // Phrases: A3, B3, G3.  0 = in tune, 1 = 40 cents sharp, 2 = wobbly, 3 = in tune with vibrato
+    auto take = [](float amp, int k1, int k2, int k3) {
+        auto ph = [amp](double hz, int k) {
+            return tone(2.0, hz, k == 1 ? 40.0 : 0.0, k == 2 ? 1 : k == 3 ? 2 : 0, amp, TEST_SAMPLE_RATE, 7 + k);
+        };
+        const auto g = std::vector<float>(size_t(0.5 * TEST_SAMPLE_RATE), 0.0f);
+        return concat({ ph(220.0, k1), g, ph(246.94, k2), g, ph(196.0, k3) });
+    };
+    Au3WaveTrack* main = makeTrack(take(0.5f, 1, 2, 1));
     main->SetName("Lead Vocal");
-    auto* t1src = makeTrack(concat({ phrase(2.0, 0, 3), gap(0.5), phrase(2.0, 2, 4), gap(0.5), phrase(2.0, 0, 5) }));
-    auto* t2src = makeTrack(concat({ phrase(2.0, 1), gap(0.5), phrase(2.0, 0, 6), gap(0.5), phrase(2.0, 4) }));
+    auto* t1src = makeTrack(take(0.35f, 0, 1, 3));
+    auto* t2src = makeTrack(take(0.22f, 2, 0, 2));
     auto snapshot = takelanes::snapshotFrom(*main, 0.0);
     Au3WaveTrack* take1 = takelanes::preserveAsTake(projectRef(), *main, *snapshot, 0.0, 7.0);
     Au3WaveTrack* take2 = takelanes::preserveAsTake(projectRef(), *main, *snapshot, 0.0, 7.0);
@@ -894,4 +932,146 @@ TEST_F(Au3RecordTests, DISABLED_MakeAutoCompDemoProject)
     ASSERT_TRUE(testtools::copyFile(m_workingProjectPath, "/workspace/autocomp_demo.aup4"));
     m_au3ProjectAccessor.reset();
 }
+
+TEST(PitchTests, YinTracksASineAndIgnoresSilence)
+{
+    using namespace au::au3::pitch;
+    for (double rate : { 8000.0, 44100.0 }) {
+        const auto x = concat({ tone(1.0, 220.0, 0.0, 0, 0.4f, rate), std::vector<float>(size_t(0.5 * rate), 0.0f) });
+        const auto frames = yin(x, rate);
+        ASSERT_GT(frames.size(), 100u);
+        size_t voiced = 0;
+        for (const auto& f : frames) {
+            if (f.timeSec > 0.1 && f.timeSec < 0.9) {
+                ASSERT_TRUE(f.voiced()) << f.timeSec;
+                EXPECT_NEAR(f.f0, 220.0, 1.0);
+                EXPECT_GT(f.confidence, 0.8);
+            }
+            if (f.timeSec > 1.1) {
+                EXPECT_FALSE(f.voiced()) << f.timeSec;
+            }
+            voiced += f.voiced();
+        }
+        EXPECT_GT(voiced, 80u);
+    }
+}
+
+namespace {
+au::au3::autocomp::Settings oneSegment()
+{
+    au::au3::autocomp::Settings s;
+    s.minSegmentSec = 10.0; // the whole input is one segment
+    return s;
+}
+}
+
+TEST(AutoCompPitchTests, InTuneBeatsFortyCentsSharp)
+{
+    using namespace au::au3::autocomp;
+    const auto inTune = tone(3.0, 220.0, 0.0, 0);
+    const auto sharp = tone(3.0, 220.0, 40.0, 0);
+    const auto segs = compute({ sharp, inTune }, AC_RATE, oneSegment());
+    ASSERT_EQ(segs.size(), 1u);
+    EXPECT_EQ(segs[0].lane, 1);
+    EXPECT_NEAR(segs[0].metrics[0].intonationCents, 40.0, 5.0);
+    EXPECT_LT(segs[0].metrics[1].intonationCents, 5.0);
+    EXPECT_GT(segs[0].metrics[0].pitchPenalty, 0.5);
+}
+
+TEST(AutoCompPitchTests, SteadyBeatsWobbly)
+{
+    using namespace au::au3::autocomp;
+    const auto steady = tone(3.0, 220.0, 0.0, 0);
+    const auto wobbly = tone(3.0, 220.0, 0.0, 1);
+    const auto segs = compute({ wobbly, steady }, AC_RATE, oneSegment());
+    ASSERT_EQ(segs.size(), 1u);
+    EXPECT_EQ(segs[0].lane, 1);
+    EXPECT_GT(segs[0].metrics[0].jitterCents, segs[0].metrics[1].jitterCents + 10.0);
+}
+
+TEST(AutoCompPitchTests, VibratoIsNotPenalised)
+{
+    using namespace au::au3::autocomp;
+    const auto vibrato = tone(3.0, 220.0, 0.0, 2);
+    const auto steady = tone(3.0, 220.0, 0.0, 0, 0.4f, AC_RATE, 3);
+    const auto segs = compute({ vibrato, steady }, AC_RATE, oneSegment());
+    ASSERT_EQ(segs.size(), 1u);
+    const auto& m = segs[0].metrics[0];
+    EXPECT_LT(m.jitterCents, oneSegment().jitterToleranceCents);
+    EXPECT_LT(m.intonationCents, oneSegment().intonationToleranceCents);
+    EXPECT_LT(m.pitchPenalty, 0.05);
+}
+
+TEST(AutoCompPitchTests, CleanButOffPitchLosesToInTune)
+{
+    using namespace au::au3::autocomp;
+    const auto offPitch = tone(3.0, 220.0, 40.0, 0);
+    const auto inTuneNoisy = tone(3.0, 220.0, 0.0, 0, 0.4f, AC_RATE, 5, 0.05f);
+    auto s = oneSegment();
+    //! Without pitch, the cleaner (off-pitch) take wins
+    s.pitchEnabled = false;
+    EXPECT_EQ(compute({ offPitch, inTuneNoisy }, AC_RATE, s)[0].lane, 0);
+    //! With pitch, the in-tune take wins
+    s.pitchEnabled = true;
+    EXPECT_EQ(compute({ offPitch, inTuneNoisy }, AC_RATE, s)[0].lane, 1);
+}
+
+TEST(AutoCompPitchTests, MissedNotesArePenalised)
+{
+    using namespace au::au3::autocomp;
+    const auto full = tone(3.0, 220.0, 0.0, 0);
+    auto missing = tone(3.0, 220.0, 0.0, 0, 0.4f, AC_RATE, 2);
+    std::fill(missing.begin() + missing.size() / 3, missing.begin() + 2 * missing.size() / 3, 0.0f);
+    const auto full2 = tone(3.0, 220.0, 0.0, 0, 0.4f, AC_RATE, 3);
+    const auto segs = compute({ missing, full, full2 }, AC_RATE, oneSegment());
+    EXPECT_NEAR(segs[0].metrics[0].missedFraction, 1.0 / 3.0, 0.05);
+    EXPECT_NE(segs[0].lane, 0);
+}
+
+TEST(AutoCompPitchTests, ThreeMinutesFourTakesPerformance)
+{
+    using namespace au::au3::autocomp;
+    const double rate = 44100.0;
+    std::vector<std::vector<float> > lanes;
+    for (int l = 0; l < 4; ++l) {
+        std::vector<float> lane;
+        for (int p = 0; p < 36; ++p) { // 36 x (4.5 s phrase + 0.5 s gap) = 180 s
+            const auto ph = tone(4.5, 196.0 * std::pow(2.0, (p % 5) / 12.0), (l == p % 4) ? 40.0 : 0.0, l == 1 ? 2 : 0,
+                                 0.4f, rate, unsigned(l * 100 + p));
+            lane.insert(lane.end(), ph.begin(), ph.end());
+            lane.insert(lane.end(), size_t(0.5 * rate), 0.0f);
+        }
+        lanes.push_back(std::move(lane));
+    }
+    Settings s;
+    const auto t0 = std::chrono::steady_clock::now();
+    const auto segs = compute(lanes, rate, s);
+    const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    s.pitchEnabled = false;
+    const auto t1 = std::chrono::steady_clock::now();
+    (void)compute(lanes, rate, s);
+    const double secsNoPitch = std::chrono::duration<double>(std::chrono::steady_clock::now() - t1).count();
+    std::cout << "[ PERF     ] auto-comp 4 x 180 s @ 44.1 kHz: " << secs << " s with pitch, "
+              << secsNoPitch << " s without, " << segs.size() << " segments" << std::endl;
+    EXPECT_GT(segs.size(), 20u);
+    EXPECT_LT(secs, 30.0);
+}
+
+TEST(AutoCompPitchTests, VibratoBeatsJitterEvenAfterAJitteryNeighbour)
+{
+    using namespace au::au3::autocomp;
+    // 44.1 kHz, previous segment chose the jittery lane: the vibrato lane must still win the next one
+    const double rate = 44100.0;
+    const auto g = std::vector<float>(size_t(0.5 * rate), 0.0f);
+    const auto a = concat({ tone(2.0, 220.0, 40.0, 0, 0.4f, rate), g, tone(2.0, 196.0, 0.0, 2, 0.4f, rate) });
+    const auto b = concat({ tone(2.0, 220.0, 0.0, 1, 0.4f, rate, 3), g, tone(2.0, 196.0, 0.0, 1, 0.4f, rate, 4) });
+    Settings s;
+    s.minSegmentSec = 1.5;
+    const auto segs = compute({ a, b }, rate, s);
+    ASSERT_EQ(segs.size(), 2u);
+    EXPECT_EQ(segs[0].lane, 1);
+    EXPECT_EQ(segs[1].lane, 0) << "jitter " << segs[1].metrics[1].jitterCents << " vs vibrato "
+                               << segs[1].metrics[0].jitterCents;
+}
+
 }

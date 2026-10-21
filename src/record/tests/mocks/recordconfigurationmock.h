@@ -33,6 +33,9 @@ public:
     MOCK_METHOD(double, autoCompSegmentLength, (), (const, override));
     MOCK_METHOD(void, setAutoCompSegmentLength, (double), (override));
     MOCK_METHOD(muse::async::Notification, autoCompSegmentLengthChanged, (), (const, override));
+    MOCK_METHOD(bool, autoCompPitchScoring, (), (const, override));
+    MOCK_METHOD(void, setAutoCompPitchScoring, (bool), (override));
+    MOCK_METHOD(muse::async::Notification, autoCompPitchScoringChanged, (), (const, override));
     MOCK_METHOD(bool, punchOutAtSelectionEnd, (), (const, override));
     MOCK_METHOD(void, setPunchOutAtSelectionEnd, (bool), (override));
     MOCK_METHOD(muse::async::Notification, punchOutAtSelectionEndChanged, (), (const, override));

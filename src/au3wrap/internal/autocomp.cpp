@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 using namespace au::au3::autocomp;
 
@@ -141,6 +142,118 @@ std::vector<size_t> au::au3::autocomp::findBoundaries(const std::vector<std::vec
     return bounds;
 }
 
+namespace {
+constexpr double NaN = std::numeric_limits<double>::quiet_NaN();
+
+//! Moving average of the voiced (non-NaN) values within +-half frames
+std::vector<double> smooth(const std::vector<double>& c, size_t half)
+{
+    std::vector<double> out(c.size(), NaN);
+    for (size_t i = 0; i < c.size(); ++i) {
+        if (std::isnan(c[i])) {
+            continue;
+        }
+        double acc = 0.0;
+        int n = 0;
+        for (size_t k = i >= half ? i - half : 0; k <= std::min(c.size() - 1, i + half); ++k) {
+            if (!std::isnan(c[k])) {
+                acc += c[k];
+                ++n;
+            }
+        }
+        out[i] = acc / n;
+    }
+    return out;
+}
+}
+
+void au::au3::autocomp::scorePitch(const std::vector<std::vector<pitch::Frame> >& tracks, size_t f0, size_t f1,
+                                   std::vector<Metrics>& metrics, const Settings& s)
+{
+    const size_t nl = tracks.size();
+    if (nl == 0 || metrics.size() != nl) {
+        return;
+    }
+    size_t n = f1;
+    for (const auto& t : tracks) {
+        n = std::min(n, t.size());
+    }
+    if (n <= f0) {
+        return;
+    }
+    const size_t len = n - f0;
+    // Per lane: cents (NaN when unvoiced), fast smoother (50 ms) for jitter, slow (210 ms) for intonation
+    std::vector<std::vector<double> > cents(nl, std::vector<double>(len, NaN)), fast(nl), slow(nl);
+    for (size_t l = 0; l < nl; ++l) {
+        for (size_t i = 0; i < len; ++i) {
+            const auto& fr = tracks[l][f0 + i];
+            if (fr.voiced()) {
+                cents[l][i] = pitch::hzToCents(fr.f0);
+            }
+        }
+        fast[l] = smooth(cents[l], 2);
+        slow[l] = smooth(cents[l], 10);
+    }
+    // Consensus reference note per frame
+    std::vector<double> reference(len, NaN);
+    std::vector<int> voicedCount(len, 0);
+    size_t voicedFrames = 0;
+    for (size_t i = 0; i < len; ++i) {
+        std::vector<double> v;
+        for (size_t l = 0; l < nl; ++l) {
+            if (!std::isnan(slow[l][i])) {
+                v.push_back(slow[l][i]);
+            }
+        }
+        voicedCount[i] = int(v.size());
+        if (v.empty()) {
+            continue;
+        }
+        std::sort(v.begin(), v.end());
+        const double med = v.size() % 2 ? v[v.size() / 2] : 0.5 * (v[v.size() / 2 - 1] + v[v.size() / 2]);
+        reference[i] = 100.0 * std::round(med / 100.0);
+        if (2 * v.size() >= nl) {
+            ++voicedFrames;
+        }
+    }
+    // Only judge pitch where the material is mostly voiced
+    if (double(voicedFrames) < 0.2 * double(len)) {
+        return;
+    }
+    for (size_t l = 0; l < nl; ++l) {
+        Metrics& m = metrics[l];
+        double jit = 0.0, inton = 0.0;
+        size_t nj = 0, ni = 0, voiced = 0, missed = 0;
+        for (size_t i = 0; i < len; ++i) {
+            const bool v = !std::isnan(cents[l][i]);
+            voiced += v ? 1 : 0;
+            const int others = voicedCount[i] - (v ? 1 : 0);
+            if (!v && nl > 1 && 2 * others >= int(nl - 1) && others > 0) {
+                ++missed;
+            }
+            if (!v) {
+                continue;
+            }
+            const double r = cents[l][i] - fast[l][i];
+            jit += r * r;
+            ++nj;
+            if (!std::isnan(reference[i])) {
+                inton += std::fabs(slow[l][i] - reference[i]);
+                ++ni;
+            }
+        }
+        m.voicedFraction = double(voiced) / double(len);
+        m.jitterCents = nj ? std::sqrt(jit / double(nj)) : 0.0;
+        m.intonationCents = ni ? inton / double(ni) : 0.0;
+        m.missedFraction = double(missed) / double(len);
+        const double pen = 0.6 * std::clamp((m.jitterCents - s.jitterToleranceCents) / 10.0, 0.0, 1.0)
+                           + 0.8 * std::clamp((m.intonationCents - s.intonationToleranceCents) / 30.0, 0.0, 1.0)
+                           + 1.0 * m.missedFraction;
+        m.pitchPenalty = s.pitchWeight * pen;
+        m.score -= m.pitchPenalty;
+    }
+}
+
 std::vector<Segment> au::au3::autocomp::compute(const std::vector<std::vector<float> >& lanes, double rate,
                                                 const Settings& s)
 {
@@ -155,6 +268,24 @@ std::vector<Segment> au::au3::autocomp::compute(const std::vector<std::vector<fl
     }
     edges.push_back(n);
 
+    std::vector<std::vector<pitch::Frame> > tracks;
+    pitch::Settings ps;
+    if (s.pitchEnabled) {
+        for (const auto& lane : lanes) {
+            tracks.push_back(pitch::yin(lane, rate, ps));
+        }
+    }
+    auto frameAt = [&](size_t sample) -> size_t {
+        if (tracks.empty()) {
+            return 0;
+        }
+        const double t = double(sample) / rate;
+        const auto& fr = tracks.front();
+        return static_cast<size_t>(std::lower_bound(fr.begin(), fr.end(), t,
+                                                    [](const pitch::Frame& f, double v) { return f.timeSec < v; })
+                                   - fr.begin());
+    };
+
     int previous = -1;
     for (size_t i = 0; i + 1 < edges.size(); ++i) {
         Segment seg;
@@ -163,6 +294,11 @@ std::vector<Segment> au::au3::autocomp::compute(const std::vector<std::vector<fl
         int best = 0;
         for (size_t l = 0; l < lanes.size(); ++l) {
             seg.metrics.push_back(analyse(lanes[l], seg.start, seg.end, rate, s));
+        }
+        if (s.pitchEnabled) {
+            scorePitch(tracks, frameAt(seg.start), frameAt(seg.end), seg.metrics, s);
+        }
+        for (size_t l = 0; l < lanes.size(); ++l) {
             if (seg.metrics[l].score > seg.metrics[best].score) {
                 best = static_cast<int>(l);
             }

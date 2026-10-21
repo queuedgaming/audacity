@@ -18,6 +18,9 @@ RecordingPreferencesModel::RecordingPreferencesModel(QObject* parent)
     recordConfiguration()->punchOutAtSelectionEndChanged().onNotify(this, [this]() {
         emit punchOutAtSelectionEndChanged();
     });
+    recordConfiguration()->autoCompPitchScoringChanged().onNotify(this, [this]() {
+        emit autoCompPitchScoringChanged();
+    });
     recordConfiguration()->autoCompSegmentLengthChanged().onNotify(this, [this]() {
         emit autoCompSegmentLengthChanged();
     });
@@ -115,4 +118,17 @@ void RecordingPreferencesModel::setAutoCompSegmentLength(double seconds)
         return;
     }
     recordConfiguration()->setAutoCompSegmentLength(seconds);
+}
+
+bool RecordingPreferencesModel::autoCompPitchScoring() const
+{
+    return recordConfiguration()->autoCompPitchScoring();
+}
+
+void RecordingPreferencesModel::setAutoCompPitchScoring(bool enabled)
+{
+    if (autoCompPitchScoring() == enabled) {
+        return;
+    }
+    recordConfiguration()->setAutoCompPitchScoring(enabled);
 }

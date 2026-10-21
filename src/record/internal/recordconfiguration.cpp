@@ -15,6 +15,7 @@ const muse::Settings::Key LEAD_IN_TIME_DURATION_KEY("record", "record/leadInTime
 const muse::Settings::Key CROSSFADE_DURATION_KEY("record", "record/crossfadeDuration");
 const muse::Settings::Key KEEP_TAKES_KEY("record", "record/keepTakesWhenRecordingOver");
 const muse::Settings::Key AUTOCOMP_SEGMENT_KEY("record", "record/autoCompSegmentLength");
+const muse::Settings::Key AUTOCOMP_PITCH_KEY("record", "record/autoCompPitchScoring");
 const muse::Settings::Key PUNCH_OUT_AT_SELECTION_END_KEY("record", "record/punchOutAtSelectionEnd");
 
 //! NOTE: these keys deliberately match the au3 preference paths (bridged to the
@@ -49,6 +50,10 @@ void RecordConfiguration::init()
         m_crossfadeDurationChanged.notify();
     });
 
+    muse::settings()->setDefaultValue(AUTOCOMP_PITCH_KEY, muse::Val(true));
+    muse::settings()->valueChanged(AUTOCOMP_PITCH_KEY).onReceive(nullptr, [this](const muse::Val&) {
+        m_autoCompPitchScoringChanged.notify();
+    });
     muse::settings()->setDefaultValue(AUTOCOMP_SEGMENT_KEY, muse::Val(2.0));
     muse::settings()->valueChanged(AUTOCOMP_SEGMENT_KEY).onReceive(nullptr, [this](const muse::Val&) {
         m_autoCompSegmentLengthChanged.notify();
@@ -178,4 +183,19 @@ void RecordConfiguration::setAutoCompSegmentLength(double seconds)
 muse::async::Notification RecordConfiguration::autoCompSegmentLengthChanged() const
 {
     return m_autoCompSegmentLengthChanged;
+}
+
+bool RecordConfiguration::autoCompPitchScoring() const
+{
+    return muse::settings()->value(AUTOCOMP_PITCH_KEY).toBool();
+}
+
+void RecordConfiguration::setAutoCompPitchScoring(bool enabled)
+{
+    muse::settings()->setSharedValue(AUTOCOMP_PITCH_KEY, muse::Val(enabled));
+}
+
+muse::async::Notification RecordConfiguration::autoCompPitchScoringChanged() const
+{
+    return m_autoCompPitchScoringChanged;
 }

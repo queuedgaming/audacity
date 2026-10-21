@@ -57,6 +57,8 @@ set(MODULE_SRC
     ${CMAKE_CURRENT_LIST_DIR}/internal/takelanes.cpp
     ${CMAKE_CURRENT_LIST_DIR}/internal/autocomp.h
     ${CMAKE_CURRENT_LIST_DIR}/internal/autocomp.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/internal/pitch.h
+    ${CMAKE_CURRENT_LIST_DIR}/internal/pitch.cpp
     ${CMAKE_CURRENT_LIST_DIR}/internal/takelanes.h
     )
 

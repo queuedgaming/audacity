@@ -457,7 +457,7 @@ std::vector<float> monoSamples(const WaveTrack& track, sampleCount s0, size_t le
 }
 
 std::vector<takelanes::AutoCompChoice> takelanes::autoComp(AudacityProject& project, WaveTrack& mainTrack,
-                                                           double minSegmentSec, double crossfade)
+                                                           double minSegmentSec, double crossfade, bool pitchScoring)
 {
     auto takes = takesOf(project, mainTrack);
     takes.erase(std::remove_if(takes.begin(), takes.end(), [](WaveTrack* t) { return t->Intervals().empty(); }),
@@ -481,6 +481,7 @@ std::vector<takelanes::AutoCompChoice> takelanes::autoComp(AudacityProject& proj
     }
     autocomp::Settings settings;
     settings.minSegmentSec = std::max(0.1, minSegmentSec);
+    settings.pitchEnabled = pitchScoring;
     const auto segments = autocomp::compute(lanes, rate, settings);
 
     std::vector<AutoCompChoice> choices;

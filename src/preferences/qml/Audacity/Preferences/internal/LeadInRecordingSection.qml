@@ -120,4 +120,18 @@ BaseSection {
             recordingPreferencesModel.setAutoCompSegmentLength(newValue)
         }
     }
+
+    CheckBox {
+        width: parent.width
+        text: qsTrc("preferences", "Auto-comp: score pitch (stability, intonation, missed notes)")
+        checked: recordingPreferencesModel.autoCompPitchScoring
+
+        navigation.name: "AutoCompPitchScoringCheckBox"
+        navigation.panel: root.navigation
+        navigation.row: 5
+
+        onClicked: {
+            recordingPreferencesModel.autoCompPitchScoring = !checked
+        }
+    }
 }

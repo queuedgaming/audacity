@@ -1061,7 +1061,8 @@ muse::Ret Au3Record::switchTake(trackedit::TrackId trackId, TakeSwitch kind)
         break;
     case TakeSwitch::AutoComp:
         done = !autoComp(project, *main, recordConfiguration()->autoCompSegmentLength(),
-                         std::max(0.0, recordConfiguration()->crossfadeDuration() / 1000.0)).empty();
+                         std::max(0.0, recordConfiguration()->crossfadeDuration() / 1000.0),
+                         recordConfiguration()->autoCompPitchScoring()).empty();
         break;
     case TakeSwitch::Next:
     case TakeSwitch::Previous:

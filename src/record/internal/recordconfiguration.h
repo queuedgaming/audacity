@@ -40,6 +40,10 @@ public:
     void setAutoCompSegmentLength(double seconds) override;
     muse::async::Notification autoCompSegmentLengthChanged() const override;
 
+    bool autoCompPitchScoring() const override;
+    void setAutoCompPitchScoring(bool enabled) override;
+    muse::async::Notification autoCompPitchScoringChanged() const override;
+
     bool punchOutAtSelectionEnd() const override;
     void setPunchOutAtSelectionEnd(bool enabled) override;
     muse::async::Notification punchOutAtSelectionEndChanged() const override;
@@ -54,5 +58,6 @@ private:
     muse::async::Notification m_punchOutAtSelectionEndChanged;
     muse::async::Notification m_keepTakesChanged;
     muse::async::Notification m_autoCompSegmentLengthChanged;
+    muse::async::Notification m_autoCompPitchScoringChanged;
 };
 }
