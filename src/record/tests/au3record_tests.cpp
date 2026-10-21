@@ -7,6 +7,9 @@
 #include <gmock/gmock.h>
 
 #include "../internal/au3/au3record.h"
+#include "../internal/au3/takelanes.h"
+
+#include "au3-xml/XMLWriter.h"
 
 #include "actions/tests/mocks/actionsdispatchermock.h"
 #include "context/tests/mocks/globalcontextmock.h"
@@ -148,6 +151,27 @@ public:
                                             ::TrackList::EventPublicationSynchrony::Synchronous);
         track->SetSelected(true);
         return track.get();
+    }
+
+    //! Mono track holding `seconds` of constant `value` starting at `start`
+    Au3WaveTrack* addFilledTrack(double start, double seconds, float value)
+    {
+        auto* track = addSelectedMonoTrack();
+        std::vector<float> buf(size_t(seconds * TEST_SAMPLE_RATE), value);
+        track->Append(0, reinterpret_cast<constSamplePtr>(buf.data()), floatSample, buf.size());
+        track->Flush();
+        if (start > 0.0) {
+            track->MoveTo(start);
+        }
+        return track;
+    }
+
+    static float sampleAt(const Au3WaveTrack& track, double t)
+    {
+        float v = -100.0f;
+        float* buffers[] { &v };
+        track.GetFloats(0, 1, buffers, track.TimeToLongSamples(t), 1, false);
+        return v;
     }
 
     std::shared_ptr<Au3Record> m_record;
@@ -318,5 +342,117 @@ TEST_F(Au3RecordTests, RecordingWithBusyEngineStartsUnpausedAtPlayhead)
 
     //! [THEN] Recording starts at the playhead position
     EXPECT_DOUBLE_EQ(startedAt, 8.0);
+}
+}
+
+namespace au::record {
+TEST_F(Au3RecordTests, TakeLanesPreserveOverwrittenRegionAsMutedTake)
+{
+    //! [GIVEN] A track with 10s of audio (value 1) and a snapshot taken before recording at 2s
+    Au3WaveTrack* main = addFilledTrack(0.0, 10.0, 1.0f);
+    auto snapshot = takelanes::snapshotFrom(*main, 2.0);
+    ASSERT_TRUE(snapshot);
+
+    //! [WHEN] A recording over [2s, 5s] is committed and the overwritten part preserved
+    Au3WaveTrack* take = takelanes::preserveAsTake(projectRef(), *main, *snapshot, 2.0, 5.0);
+
+    //! [THEN] A muted take lane holds exactly the overwritten region
+    ASSERT_NE(take, nullptr);
+    EXPECT_TRUE(take->GetMute());
+    EXPECT_NEAR(take->GetStartTime(), 2.0, 1e-6);
+    EXPECT_NEAR(take->GetEndTime(), 5.0, 1e-6);
+    EXPECT_FLOAT_EQ(sampleAt(*take, 3.0), 1.0f);
+    EXPECT_EQ(TakeLaneInfo::Get(*take).takeIndex, 1);
+    EXPECT_EQ(TakeLaneInfo::Get(*take).groupId, TakeLaneInfo::Get(*main).groupId);
+    EXPECT_EQ(TakeLaneInfo::Get(*main).takeIndex, 0);
+
+    auto takes = takelanes::takesOf(projectRef(), *main);
+    ASSERT_EQ(takes.size(), 1u);
+    EXPECT_EQ(takes[0], take);
+}
+
+TEST_F(Au3RecordTests, TakeLanesNumberSuccessivePasses)
+{
+    Au3WaveTrack* main = addFilledTrack(0.0, 10.0, 1.0f);
+    auto snapshot = takelanes::snapshotFrom(*main, 2.0);
+    takelanes::preserveAsTake(projectRef(), *main, *snapshot, 2.0, 5.0);
+    takelanes::preserveAsTake(projectRef(), *main, *snapshot, 2.0, 4.0);
+
+    auto takes = takelanes::takesOf(projectRef(), *main);
+    ASSERT_EQ(takes.size(), 2u);
+    EXPECT_EQ(TakeLaneInfo::Get(*takes[0]).takeIndex, 1);
+    EXPECT_EQ(TakeLaneInfo::Get(*takes[1]).takeIndex, 2);
+}
+
+TEST_F(Au3RecordTests, TakeLanesNothingPreservedWhenRecordingPastTheEnd)
+{
+    //! [GIVEN] Audio only up to 3s; recording starts at 5s
+    Au3WaveTrack* main = addFilledTrack(0.0, 3.0, 1.0f);
+    EXPECT_FALSE(takelanes::snapshotFrom(*main, 5.0));
+    EXPECT_TRUE(takelanes::takesOf(projectRef(), *main).empty());
+}
+
+TEST_F(Au3RecordTests, TakeLanesActivateTakeSwapsAudio)
+{
+    //! [GIVEN] The original audio (1) preserved as a take, and a new recording (2) on [2s, 5s]
+    Au3WaveTrack* main = addFilledTrack(0.0, 10.0, 1.0f);
+    auto snapshot = takelanes::snapshotFrom(*main, 2.0);
+    Au3WaveTrack* take = takelanes::preserveAsTake(projectRef(), *main, *snapshot, 2.0, 5.0);
+    ASSERT_NE(take, nullptr);
+
+    Au3WaveTrack* newPass = addFilledTrack(0.0, 3.0, 2.0f);
+    auto newAudio = std::static_pointer_cast<Au3WaveTrack>(newPass->Copy(0.0, 3.0, false));
+    main->ClearAndPaste(2.0, 5.0, *newAudio);
+    ASSERT_FLOAT_EQ(sampleAt(*main, 3.0), 2.0f);
+
+    //! [WHEN] The take is activated
+    EXPECT_TRUE(takelanes::activateTake(projectRef(), *main, *take));
+
+    //! [THEN] The main track plays the take's audio and the take lane holds the new pass
+    EXPECT_FLOAT_EQ(sampleAt(*main, 3.0), 1.0f);
+    EXPECT_FLOAT_EQ(sampleAt(*take, 3.0), 2.0f);
+    EXPECT_FLOAT_EQ(sampleAt(*main, 7.0), 1.0f); // outside the take region is untouched
+
+    //! [AND] Activating a track that is not one of its takes is refused
+    EXPECT_FALSE(takelanes::activateTake(projectRef(), *main, *newPass));
+}
+
+TEST_F(Au3RecordTests, TakeLaneInfoIsSavedWithTheTrackAndSurvivesCopies)
+{
+    Au3WaveTrack* main = addFilledTrack(0.0, 10.0, 1.0f);
+    auto snapshot = takelanes::snapshotFrom(*main, 2.0);
+    Au3WaveTrack* take = takelanes::preserveAsTake(projectRef(), *main, *snapshot, 2.0, 5.0);
+    ASSERT_NE(take, nullptr);
+    const std::string group = TakeLaneInfo::Get(*take).groupId;
+
+    //! [THEN] The project XML of the take track carries its take-lane element
+    XMLStringWriter xml;
+    take->WriteXML(xml);
+    const std::string written = xml.ToStdString();
+    EXPECT_NE(written.find("<takelane group=\"" + group + "\" index=\"1\""), std::string::npos) << written;
+
+    //! [AND] An ordinary track writes nothing extra
+    Au3WaveTrack* plain = addSelectedMonoTrack();
+    XMLStringWriter plainXml;
+    plain->WriteXML(plainXml);
+    EXPECT_EQ(plainXml.ToStdString().find("takelane"), std::string::npos);
+
+    //! [AND] Reading the element back restores it (project load path)
+    Au3WaveTrack* loaded = addSelectedMonoTrack();
+    XMLTagHandler* handler = loaded->HandleXMLChild("takelane");
+    ASSERT_NE(handler, nullptr);
+    AttributesList attrs {
+        { "group", XMLAttributeValueView(std::string_view(group)) },
+        { "index", XMLAttributeValueView(3) },
+    };
+    EXPECT_TRUE(handler->HandleXMLTag("takelane", attrs));
+    EXPECT_EQ(TakeLaneInfo::Get(*loaded).groupId, group);
+    EXPECT_EQ(TakeLaneInfo::Get(*loaded).takeIndex, 3);
+
+    //! [AND] Duplicating the track (as undo/redo does) keeps the membership
+    auto copyHolder = std::static_pointer_cast<Au3WaveTrack>(take->Duplicate());
+    auto* copy = copyHolder.get();
+    EXPECT_EQ(TakeLaneInfo::Get(*copy).groupId, group);
+    EXPECT_EQ(TakeLaneInfo::Get(*copy).takeIndex, 1);
 }
 }

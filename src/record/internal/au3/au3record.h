@@ -4,6 +4,8 @@
 
 #pragma once
 
+#include <map>
+
 #include <vector>
 
 #include "framework/global/async/asyncable.h"
@@ -70,6 +72,14 @@ private:
         bool linkedToPendingClip;
         bool deferredClipCreation = false;   // true for lead-in-recording: clip on pending only, not on original yet
     };
+
+    //! Audio that a recording may overwrite, kept so it can be preserved as a take lane
+    struct TakeSnapshot {
+        std::shared_ptr<au3::Au3WaveTrack> audio;
+        double t0 = 0.0;
+    };
+    std::map<trackedit::TrackId, TakeSnapshot> m_takeSnapshots;
+    void preserveOverwrittenTakes();
 
     au3::Au3Project& projectRef() const;
 

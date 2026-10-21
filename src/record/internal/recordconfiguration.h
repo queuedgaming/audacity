@@ -32,6 +32,9 @@ public:
     void setCrossfadeDuration(double milliseconds) override;
     muse::async::Notification crossfadeDurationChanged() const override;
 
+    bool keepTakesWhenRecordingOver() const override;
+    void setKeepTakesWhenRecordingOver(bool enabled) override;
+
     bool punchOutAtSelectionEnd() const override;
     void setPunchOutAtSelectionEnd(bool enabled) override;
     muse::async::Notification punchOutAtSelectionEndChanged() const override;

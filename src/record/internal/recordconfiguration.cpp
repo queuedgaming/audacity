@@ -13,6 +13,7 @@ const muse::Settings::Key MIC_METERING_KEY("record", "record/micMetering");
 const muse::Settings::Key INPUT_MONITORING_KEY("record", "record/inputMonitoring");
 const muse::Settings::Key LEAD_IN_TIME_DURATION_KEY("record", "record/leadInTimeDuration");
 const muse::Settings::Key CROSSFADE_DURATION_KEY("record", "record/crossfadeDuration");
+const muse::Settings::Key KEEP_TAKES_KEY("record", "record/keepTakesWhenRecordingOver");
 const muse::Settings::Key PUNCH_OUT_AT_SELECTION_END_KEY("record", "record/punchOutAtSelectionEnd");
 
 //! NOTE: these keys deliberately match the au3 preference paths (bridged to the
@@ -46,6 +47,8 @@ void RecordConfiguration::init()
     muse::settings()->valueChanged(CROSSFADE_DURATION_KEY).onReceive(nullptr, [this](const muse::Val&) {
         m_crossfadeDurationChanged.notify();
     });
+
+    muse::settings()->setDefaultValue(KEEP_TAKES_KEY, muse::Val(true));
 
     muse::settings()->setDefaultValue(PUNCH_OUT_AT_SELECTION_END_KEY, muse::Val(true));
     muse::settings()->valueChanged(PUNCH_OUT_AT_SELECTION_END_KEY).onReceive(nullptr, [this](const muse::Val&) {
@@ -111,6 +114,16 @@ void RecordConfiguration::setCrossfadeDuration(double milliseconds)
 muse::async::Notification RecordConfiguration::crossfadeDurationChanged() const
 {
     return m_crossfadeDurationChanged;
+}
+
+bool RecordConfiguration::keepTakesWhenRecordingOver() const
+{
+    return muse::settings()->value(KEEP_TAKES_KEY).toBool();
+}
+
+void RecordConfiguration::setKeepTakesWhenRecordingOver(bool enabled)
+{
+    muse::settings()->setSharedValue(KEEP_TAKES_KEY, muse::Val(enabled));
 }
 
 bool RecordConfiguration::punchOutAtSelectionEnd() const

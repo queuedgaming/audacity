@@ -3,6 +3,7 @@
 */
 
 #include "au3record.h"
+#include "takelanes.h"
 
 #include <cfloat>
 
@@ -304,6 +305,7 @@ void Au3Record::init()
         dispatcher()->dispatch(q);
 
         m_recordData.clear();
+        m_takeSnapshots.clear();
         rebuildRecordingClipKeys();
     });
 
@@ -329,6 +331,8 @@ void Au3Record::init()
             prj->notifyAboutClipChanged(DomConverter::clip(origWaveTrack, origClip.get()));
             m_recordPosition.set(origClip->GetPlayEndTime());
         }
+
+        preserveOverwrittenTakes();
 
         for (const RecordData& recordEntry : m_recordData) {
             // Skip deferred clips that were never created (cancelled during lead-in time)
@@ -762,6 +766,12 @@ Ret Au3Record::doRecord(Au3Project& project,
                 continue;
             }
 
+            if (recordConfiguration()->keepTakesWhenRecordingOver()) {
+                if (auto snapshot = takelanes::snapshotFrom(*wt, t0)) {
+                    m_takeSnapshots[trackedit::TrackId(wt->GetId())] = TakeSnapshot { snapshot, t0 };
+                }
+            }
+
             // If the track was chosen for recording and playback both,
             // remember the original in leadInTime tracks, before making the
             // pending replacement.
@@ -975,8 +985,38 @@ Ret Au3Record::doRecord(Au3Project& project,
     return make_ok();
 }
 
+void Au3Record::preserveOverwrittenTakes()
+{
+    // Before the new recording makes room for itself (overwriting what was under it),
+    // keep the overwritten audio of each pass as a muted take lane of the track
+    for (const RecordData& recordEntry : m_recordData) {
+        if (recordEntry.deferredClipCreation) {
+            continue;
+        }
+        const auto it = m_takeSnapshots.find(recordEntry.clipKey.trackId);
+        if (it == m_takeSnapshots.end()) {
+            continue;
+        }
+        Au3WaveTrack* track = DomAccessor::findWaveTrack(projectRef(), ::TrackId(recordEntry.clipKey.trackId));
+        std::shared_ptr<Au3WaveClip> clip = track ? DomAccessor::findWaveClip(track, recordEntry.clipKey.itemId) : nullptr;
+        if (!clip) {
+            continue;
+        }
+        const double t0 = it->second.t0;
+        const double t1 = clip->GetPlayEndTime();
+        if (Au3WaveTrack* take = takelanes::preserveAsTake(projectRef(), *track, *it->second.audio, t0, t1)) {
+            if (auto prj = globalContext()->currentTrackeditProject()) {
+                prj->notifyAboutTrackAdded(DomConverter::track(take));
+            }
+        }
+        m_takeSnapshots.erase(it);
+    }
+    m_takeSnapshots.clear();
+}
+
 void Au3Record::cancelRecording()
 {
+    m_takeSnapshots.clear();
     Au3Project& project = projectRef();
     PendingTracks::Get(project).ClearPendingTracks();
 }
