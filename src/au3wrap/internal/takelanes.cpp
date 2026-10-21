@@ -3,6 +3,7 @@
 */
 #include "takelanes.h"
 #include "autocomp.h"
+#include "projectkey.h"
 
 #include <algorithm>
 #include <map>
@@ -482,6 +483,10 @@ std::vector<takelanes::AutoCompChoice> takelanes::autoComp(AudacityProject& proj
     autocomp::Settings settings;
     settings.minSegmentSec = std::max(0.1, minSegmentSec);
     settings.pitchEnabled = pitchScoring;
+    if (const auto& k = ProjectKey::Get(project).key()) {
+        settings.key = keydetect::KeyCandidate { k->tonic, k->minor, 1.0 };
+        settings.tuningCents = k->tuningCents;
+    }
     const auto segments = autocomp::compute(lanes, rate, settings);
 
     std::vector<AutoCompChoice> choices;
@@ -496,4 +501,20 @@ std::vector<takelanes::AutoCompChoice> takelanes::autoComp(AudacityProject& proj
         choices.push_back(c);
     }
     return choices;
+}
+
+keydetect::Result takelanes::detectKey(const WaveTrack& track, double t0, double t1)
+{
+    if (t1 <= t0) {
+        t0 = track.GetStartTime();
+        t1 = track.GetEndTime();
+    }
+    t0 = std::max(t0, track.GetStartTime());
+    t1 = std::min(t1, track.GetEndTime());
+    if (t1 <= t0) {
+        return {};
+    }
+    const auto s0 = track.TimeToLongSamples(t0);
+    const size_t len = (track.TimeToLongSamples(t1) - s0).as_size_t();
+    return keydetect::detect(monoSamples(track, s0, len), track.GetRate());
 }

@@ -4,6 +4,7 @@
 
 #include "au3record.h"
 #include "au3wrap/internal/takelanes.h"
+#include "au3wrap/internal/projectkey.h"
 
 #include <cfloat>
 
@@ -1094,6 +1095,38 @@ muse::Ret Au3Record::switchTake(trackedit::TrackId trackId, TakeSwitch kind)
                                            trc("record", "Switch take"));
     }
     return make_ok();
+}
+
+KeyDetection Au3Record::detectKey(trackedit::TrackId trackId, double t0, double t1, bool store)
+{
+    KeyDetection out;
+    Au3Project& project = projectRef();
+    const Au3WaveTrack* track = DomAccessor::findWaveTrack(project, ::TrackId(trackId));
+    if (!track) {
+        return out;
+    }
+    const auto r = takelanes::detectKey(*track, t0, t1);
+    out.valid = r.valid;
+    out.tuningCents = r.tuningCents;
+    out.tuningHz = r.tuningHz;
+    if (!r.valid) {
+        return out;
+    }
+    out.keyName = r.keyName();
+    out.tonic = r.key.tonic;
+    out.minor = r.key.minor;
+    out.correlation = r.key.correlation;
+    out.confidence = r.confidence;
+    out.scaleConfidence = r.scaleConfidence;
+    out.fromPitchTrack = r.usedPitchTrack;
+    for (const auto& a : r.alternatives) {
+        out.alternatives.emplace_back(keydetect::pitchClassName(a.tonic) + (a.minor ? " minor" : " major"), a.correlation);
+    }
+    if (store) {
+        ProjectKey::Get(project).setKey(ProjectKey::Key { r.key.tonic, r.key.minor, r.tuningCents, r.confidence });
+        projectHistory()->markUnsaved();
+    }
+    return out;
 }
 
 void Au3Record::cancelRecording()

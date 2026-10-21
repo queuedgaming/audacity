@@ -71,6 +71,7 @@ public:
 
     bool isLeadInRecording() const override;
     bool canSwitchTake(TakeSwitch kind) const override;
+    bool canDetectKey() const override;
     muse::async::Notification isLeadInRecordingChanged() const override;
     muse::secs_t leadInRecordingStartTime() const override;
     std::vector<trackedit::TrackId> leadInRecordingTrackIds() const override;
@@ -94,6 +95,7 @@ private:
     muse::Ret stop();
     muse::Ret leadInRecording();
     muse::Ret switchTake(TakeSwitch kind);
+    muse::Ret detectKey();
     std::optional<trackedit::TrackId> takeTargetTrack() const;
     void stopPlaybackIfPaused();
     muse::Ret toggleMicMetering();

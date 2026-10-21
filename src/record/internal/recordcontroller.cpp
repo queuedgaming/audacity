@@ -8,6 +8,9 @@
 
 #include "../recordcommands.h"
 
+#include <cmath>
+#include <sstream>
+
 using namespace muse;
 using namespace au::record;
 using namespace muse::async;
@@ -26,6 +29,7 @@ const ActionQuery RECORD_PREVIOUS_TAKE_QUERY("action://record/previous-take");
 const ActionQuery RECORD_ACTIVATE_TAKE_QUERY("action://record/activate-take");
 const ActionQuery RECORD_COMP_TAKE_SELECTION_QUERY("action://record/comp-take-selection");
 const ActionQuery RECORD_AUTO_COMP_QUERY("action://record/auto-comp-takes");
+const ActionQuery RECORD_DETECT_KEY_QUERY("action://record/detect-key");
 
 const ActionCode RECORD_ON_CURRENT_TRACK_CODE("record-on-current-track");
 const ActionCode RECORD_ON_NEW_TRACK_CODE("record-on-new-track");
@@ -47,6 +51,7 @@ void RecordController::init()
     cd->onRequest(this, RECORD_ACTIVATE_TAKE_COMMAND, [this]() { return switchTake(TakeSwitch::Activate); });
     cd->onRequest(this, RECORD_COMP_TAKE_SELECTION_COMMAND, [this]() { return switchTake(TakeSwitch::CompSelection); });
     cd->onRequest(this, RECORD_AUTO_COMP_COMMAND, [this]() { return switchTake(TakeSwitch::AutoComp); });
+    cd->onRequest(this, RECORD_DETECT_KEY_COMMAND, [this]() { return detectKey(); });
 
     static const std::vector<ActionToCommand> actionToCommand = {
         { RECORD_START_QUERY.toString(), RECORD_START_COMMAND, {} },
@@ -62,6 +67,7 @@ void RecordController::init()
         { RECORD_ACTIVATE_TAKE_QUERY.toString(), RECORD_ACTIVATE_TAKE_COMMAND, {} },
         { RECORD_COMP_TAKE_SELECTION_QUERY.toString(), RECORD_COMP_TAKE_SELECTION_COMMAND, {} },
         { RECORD_AUTO_COMP_QUERY.toString(), RECORD_AUTO_COMP_COMMAND, {} },
+        { RECORD_DETECT_KEY_QUERY.toString(), RECORD_DETECT_KEY_COMMAND, {} },
     };
     registerActionToCommand(this, actionToCommand, commandDispatcher(), dispatcher());
 
@@ -295,6 +301,56 @@ Ret RecordController::switchTake(TakeSwitch kind)
         return make_ret(Ret::Code::NotSupported);
     }
     return record()->switchTake(*takeTargetTrack(), kind);
+}
+
+bool RecordController::canDetectKey() const
+{
+    return !isRecording() && takeTargetTrack().has_value();
+}
+
+Ret RecordController::detectKey()
+{
+    if (!canDetectKey()) {
+        return make_ret(Ret::Code::NotSupported);
+    }
+    double t0 = selectionController()->dataSelectedStartTime();
+    double t1 = selectionController()->dataSelectedEndTime();
+    if (!(t1 > t0)) {
+        t0 = t1 = 0.0; // whole track
+    }
+    const KeyDetection r = record()->detectKey(*takeTargetTrack(), t0, t1, /*store*/ true);
+    std::string body;
+    if (!r.valid) {
+        body = muse::trc("record", "Not enough pitched audio to estimate a key.");
+    } else {
+        auto pct = [](double v) { return std::to_string(int(std::lround(v * 100.0))) + "%"; };
+        auto fixed = [](double v, int digits) {
+            std::ostringstream ss;
+            ss.setf(std::ios::fixed);
+            ss.precision(digits);
+            ss << v;
+            return ss.str();
+        };
+        body = muse::qtrc("record", "Key: %1\nConfidence: %2 (scale: %3)\nTuning: A = %4 Hz (%5 cents)\nAnalysis: %6")
+               .arg(QString::fromStdString(r.keyName))
+               .arg(QString::fromStdString(pct(r.confidence)))
+               .arg(QString::fromStdString(pct(r.scaleConfidence)))
+               .arg(QString::fromStdString(fixed(r.tuningHz, 1)))
+               .arg(QString::fromStdString((r.tuningCents >= 0 ? "+" : "") + fixed(r.tuningCents, 1)))
+               .arg(r.fromPitchTrack ? muse::qtrc("record", "pitch track (monophonic)") : muse::qtrc("record", "spectrum (chords / mix)"))
+               .toStdString();
+        if (!r.alternatives.empty()) {
+            body += "\n" + muse::trc("record", "Alternatives:");
+            for (size_t i = 0; i < std::min<size_t>(3, r.alternatives.size()); ++i) {
+                body += (i ? ", " : " ") + r.alternatives[i].first + " (r " + fixed(r.alternatives[i].second, 2) + ")";
+            }
+        }
+        body += "\n\n" + muse::trc("record", "Stored as the project key; auto-comp scores intonation against this scale.");
+    }
+    interactive()->infoSync(muse::trc("record", "Detect key"), muse::IInteractive::Text(body), {
+        muse::IInteractive::ButtonData(muse::IInteractive::Button::Ok, muse::trc("record", "OK"), true)
+    });
+    return make_ok();
 }
 
 void RecordController::stopPlaybackIfPaused()

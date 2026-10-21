@@ -26,6 +26,7 @@ static const ActionQuery RECORD_PREVIOUS_TAKE_QUERY("action://record/previous-ta
 static const ActionQuery RECORD_ACTIVATE_TAKE_QUERY("action://record/activate-take");
 static const ActionQuery RECORD_COMP_TAKE_SELECTION_QUERY("action://record/comp-take-selection");
 static const ActionQuery RECORD_AUTO_COMP_QUERY("action://record/auto-comp-takes");
+static const ActionQuery RECORD_DETECT_KEY_QUERY("action://record/detect-key");
 
 const UiActionList RecordUiActions::m_mainActions = {
     UiAction(RECORD_START_QUERY.toString(),
@@ -130,6 +131,14 @@ const UiActionList RecordUiActions::m_mainActions = {
              TranslatableString("action", "Auto-comp takes"),
              //: Action description: shown as a tooltip; can be a full sentence
              TranslatableString("action_description", "Pick the cleanest take for each phrase of the focused track")
+             ),
+    UiAction(RECORD_DETECT_KEY_QUERY.toString(),
+             au::context::UiCtxProjectOpened,
+             au::context::CTX_PROJECT_FOCUSED,
+             //: Action title: shown as a menu item or a button label; keep it short
+             TranslatableString("action", "Detect key"),
+             //: Action description: shown as a tooltip; can be a full sentence
+             TranslatableString("action_description", "Estimate the key, scale and tuning of the selection or focused track and store it as the project key")
              ),
     UiAction("record-on-current-track",
              au::context::UiCtxProjectOpened,

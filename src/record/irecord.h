@@ -40,6 +40,10 @@ public:
     //! Take lanes of the given track (a main track or one of its takes)
     virtual bool canSwitchTake(trackedit::TrackId trackId, TakeSwitch kind) const = 0;
     virtual muse::Ret switchTake(trackedit::TrackId trackId, TakeSwitch kind) = 0;
+
+    //! Key / scale and tuning of the track over [t0, t1) (whole track when t1 <= t0);
+    //! when `store` and the result is valid, it becomes the project key
+    virtual KeyDetection detectKey(trackedit::TrackId trackId, double t0, double t1, bool store) = 0;
 };
 
 using IAudioRecordPtr = std::shared_ptr<IRecord>;

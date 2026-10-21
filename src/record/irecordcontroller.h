@@ -42,6 +42,7 @@ public:
 
     //! Take lanes of the focused (or first selected) track
     virtual bool canSwitchTake(TakeSwitch kind) const = 0;
+    virtual bool canDetectKey() const = 0;
 };
 }
 

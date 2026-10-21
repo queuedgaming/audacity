@@ -141,6 +141,15 @@ const std::vector<CommandInfo> s_commandInfos = {
         InputSchema(),
         Decoration()
     },
+    CommandInfo{
+        RECORD_DETECT_KEY_COMMAND,
+        //: Command title: shown as a menu item or a button label; keep it short
+        TranslatableString("command", "Detect key"),
+        //: Command description: shown as a tooltip; can be a full sentence
+        TranslatableString("command_description", "Estimate the key, scale and tuning of the selection or focused track and store it as the project key"),
+        InputSchema(),
+        Decoration()
+    },
 };
 }
 

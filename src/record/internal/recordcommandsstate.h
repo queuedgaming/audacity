@@ -12,6 +12,8 @@
 
 #include "context/iglobalcontext.h"
 #include "record/irecordcontroller.h"
+#include "trackedit/iselectioncontroller.h"
+#include "trackedit/internal/itracknavigationcontroller.h"
 
 namespace au::record {
 class RecordCommandsState : public muse::rcommand::IModuleCommandsState, public muse::Contextable, public muse::async::Asyncable
@@ -19,6 +21,8 @@ class RecordCommandsState : public muse::rcommand::IModuleCommandsState, public 
     muse::GlobalInject<muse::rcommand::ICommandsRegister> commandsRegister;
     muse::ContextInject<au::context::IGlobalContext> globalContext{ this };
     muse::ContextInject<IRecordController> controller{ this };
+    muse::ContextInject<trackedit::ISelectionController> selectionController{ this };
+    muse::ContextInject<trackedit::ITrackNavigationController> trackNavigationController{ this };
 
 public:
     RecordCommandsState(const muse::modularity::ContextPtr& ctx)
@@ -34,6 +38,7 @@ public:
 
 private:
     void updateCommandStates(const std::vector<muse::rcommand::Command>& commands = {});
+    void updateTrackCommandStates();
 
     muse::rcommand::IModuleCommandsRegisterPtr m_moduleRegister;
     std::map<muse::rcommand::Command, muse::rcommand::CommandState> m_commandStates;

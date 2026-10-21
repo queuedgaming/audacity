@@ -10,6 +10,8 @@
 #include "au3-registries/ClientData.h"
 #include "au3-xml/XMLTagHandler.h"
 
+#include "keydetect.h"
+
 #include <wx/string.h>
 
 class AudacityProject;
@@ -109,6 +111,9 @@ struct AutoCompChoice {
 };
 std::vector<AutoCompChoice> autoComp(AudacityProject& project, WaveTrack& mainTrack, double minSegmentSec,
                                      double crossfade, bool pitchScoring = true);
+
+//! Key / scale and tuning of `track` (mono mix) over [t0, t1); the whole track when t1 <= t0
+keydetect::Result detectKey(const WaveTrack& track, double t0, double t1);
 
 //! Label for comped regions of take number `index` ("Take N")
 wxString compLabel(int index);

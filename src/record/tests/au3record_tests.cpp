@@ -8,6 +8,7 @@
 #include <iostream>
 #include <cmath>
 #include <set>
+#include <sstream>
 
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
@@ -15,6 +16,8 @@
 #include "../internal/au3/au3record.h"
 #include "au3wrap/internal/takelanes.h"
 #include "au3wrap/internal/autocomp.h"
+#include "au3wrap/internal/keydetect.h"
+#include "au3wrap/internal/projectkey.h"
 
 #include "au3-xml/XMLWriter.h"
 
@@ -1074,4 +1077,349 @@ TEST(AutoCompPitchTests, VibratoBeatsJitterEvenAfterAJitteryNeighbour)
                                << segs[1].metrics[0].jitterCents;
 }
 
+
+// ---------------------------------------------------------------------------------------------
+// Key / scale and tuning detection
+namespace {
+namespace kd = au::au3::keydetect;
+constexpr double KD_RATE = 16000.0;
+
+double midiHz(double midi, double tuningCents = 0.0)
+{
+    return 440.0 * std::pow(2.0, (midi - 69.0) / 12.0 + tuningCents / 1200.0);
+}
+
+//! Notes (midi, seconds) with 3 decaying harmonics and short fades; midi < 0 is a rest
+std::vector<float> melody(const std::vector<std::pair<double, double> >& notes, double tuningCents = 0.0,
+                          double rate = KD_RATE, float amp = 0.3f)
+{
+    std::vector<float> x;
+    for (const auto& [m, sec] : notes) {
+        const size_t n = size_t(sec * rate);
+        const size_t fade = size_t(0.01 * rate);
+        for (size_t i = 0; i < n; ++i) {
+            float v = 0.0f;
+            if (m >= 0) {
+                const double f = midiHz(m, tuningCents);
+                const double t = double(i) / rate;
+                v = amp * float(std::sin(2 * M_PI * f * t) + 0.4 * std::sin(4 * M_PI * f * t) + 0.2 * std::sin(6 * M_PI * f * t));
+                const double g = std::min({ 1.0, double(i) / double(fade), double(n - i) / double(fade) });
+                v *= float(g);
+            }
+            x.push_back(v);
+        }
+    }
+    return x;
+}
+
+//! Block chords (each a list of midi notes) of `sec` each
+std::vector<float> chords(const std::vector<std::vector<int> >& seq, double sec, double tuningCents = 0.0,
+                          double rate = KD_RATE)
+{
+    std::vector<float> x;
+    for (const auto& ch : seq) {
+        const size_t n = size_t(sec * rate);
+        for (size_t i = 0; i < n; ++i) {
+            const double t = double(i) / rate;
+            double v = 0.0;
+            for (int m : ch) {
+                const double f = midiHz(m, tuningCents);
+                v += std::sin(2 * M_PI * f * t) + 0.3 * std::sin(4 * M_PI * f * t) + 0.15 * std::sin(6 * M_PI * f * t);
+            }
+            x.push_back(float(0.12 * v));
+        }
+    }
+    return x;
+}
+
+//! A tonal melody in a major key (tonic midi `t`): tonic emphasis, scale run, arpeggios, cadence
+std::vector<std::pair<double, double> > majorTune(int t)
+{
+    const int sc[] = { 0, 2, 4, 5, 7, 9, 11, 12 };
+    std::vector<std::pair<double, double> > n { { t, 0.6 } };
+    for (int d : sc) {
+        n.push_back({ t + d, 0.2 });
+    }
+    for (int d : { 12, 7, 4, 0, 4, 7, 5, 2, 11 - 12, 0 }) {
+        n.push_back({ t + d, 0.3 });
+    }
+    n.push_back({ t + 7, 0.4 });
+    n.push_back({ t, 0.8 });
+    return n;
+}
+
+//! Same for harmonic minor (raised 7th as leading tone)
+std::vector<std::pair<double, double> > minorTune(int t)
+{
+    const int sc[] = { 0, 2, 3, 5, 7, 8, 11, 12 };
+    std::vector<std::pair<double, double> > n { { t, 0.6 } };
+    for (int d : sc) {
+        n.push_back({ t + d, 0.2 });
+    }
+    for (int d : { 12, 7, 3, 0, 3, 7, 5, 2, 11 - 12, 0 }) {
+        n.push_back({ t + d, 0.3 });
+    }
+    n.push_back({ t + 7, 0.4 });
+    n.push_back({ t, 0.8 });
+    return n;
+}
+
+std::string describe(const kd::Result& r)
+{
+    std::ostringstream ss;
+    ss << r.keyName() << " r=" << r.key.correlation << " conf=" << r.confidence << " scale=" << r.scaleConfidence
+       << " tuning=" << r.tuningCents << " pitchTrack=" << r.usedPitchTrack << " chroma:";
+    for (double c : r.chroma) {
+        ss << " " << int(std::lround(c * 1000));
+    }
+    ss << " alts:";
+    for (const auto& a : r.alternatives) {
+        ss << " " << kd::pitchClassName(a.tonic) << (a.minor ? "m" : "") << "(" << a.correlation << ")";
+    }
+    return ss.str();
+}
+}
+
+TEST(KeyDetectTests, MajorMelodiesInSeveralKeys)
+{
+    for (int tonic : { 60, 62, 66, 58, 64 }) { // C, D, F#, Bb, E
+        const auto r = kd::detect(melody(majorTune(tonic)), KD_RATE);
+        ASSERT_TRUE(r.valid);
+        EXPECT_TRUE(r.usedPitchTrack);
+        EXPECT_EQ(r.key.tonic, tonic % 12) << describe(r);
+        EXPECT_FALSE(r.key.minor) << describe(r);
+        EXPECT_GT(r.scaleConfidence, 0.3) << describe(r);
+    }
+}
+
+TEST(KeyDetectTests, MinorMelodiesInSeveralKeys)
+{
+    for (int tonic : { 57, 64, 60, 66, 55 }) { // A, E, C, F#, G minor
+        const auto r = kd::detect(melody(minorTune(tonic)), KD_RATE);
+        ASSERT_TRUE(r.valid);
+        EXPECT_EQ(r.key.tonic, tonic % 12) << describe(r);
+        EXPECT_TRUE(r.key.minor) << describe(r);
+    }
+}
+
+TEST(KeyDetectTests, RelativeMajorAndMinorAreToldApart)
+{
+    //! [GIVEN] Two melodies on the same seven notes (no G#): one centred on C, one on A
+    const std::vector<std::pair<double, double> > cMajor {
+        { 60, 0.8 }, { 64, 0.3 }, { 67, 0.3 }, { 72, 0.6 }, { 67, 0.3 }, { 64, 0.3 }, { 65, 0.2 }, { 62, 0.3 },
+        { 59, 0.3 }, { 60, 0.8 }, { 64, 0.3 }, { 62, 0.3 }, { 60, 1.0 } };
+    const std::vector<std::pair<double, double> > aMinor {
+        { 57, 0.8 }, { 60, 0.3 }, { 64, 0.3 }, { 69, 0.6 }, { 64, 0.3 }, { 60, 0.3 }, { 62, 0.2 }, { 59, 0.3 },
+        { 64, 0.3 }, { 57, 0.8 }, { 60, 0.3 }, { 59, 0.3 }, { 57, 1.0 } };
+    //! [WHEN] Detected
+    const auto rc = kd::detect(melody(cMajor), KD_RATE);
+    const auto ra = kd::detect(melody(aMinor), KD_RATE);
+    //! [THEN] C major and A minor respectively; both share the note set, so the scale is certain either way
+    EXPECT_EQ(rc.key.tonic, 0) << describe(rc);
+    EXPECT_FALSE(rc.key.minor) << describe(rc);
+    EXPECT_EQ(ra.key.tonic, 9) << describe(ra);
+    EXPECT_TRUE(ra.key.minor) << describe(ra);
+    EXPECT_GE(rc.scaleConfidence, rc.confidence);
+    EXPECT_GE(ra.scaleConfidence, ra.confidence);
+}
+
+TEST(KeyDetectTests, ChordProgressionsUseTheSpectrum)
+{
+    //! [GIVEN] I-IV-V-I in G major and i-iv-V-i in D minor (with C#), three-note block chords
+    const auto g = chords({ { 55, 59, 62 }, { 60, 64, 67 }, { 62, 66, 69 }, { 55, 59, 62 },
+                            { 52, 55, 59 }, { 60, 64, 67 }, { 62, 66, 69, 72 }, { 55, 59, 62, 67 } }, 0.8);
+    const auto d = chords({ { 50, 53, 57 }, { 55, 58, 62 }, { 57, 61, 64 }, { 50, 53, 57 },
+                            { 58, 62, 65 }, { 55, 58, 62 }, { 57, 61, 64, 67 }, { 50, 53, 57, 62 } }, 0.8);
+    const auto c = chords({ { 48, 52, 55 }, { 53, 57, 60 }, { 55, 59, 62 }, { 48, 52, 55 },
+                            { 45, 48, 52 }, { 50, 53, 57 }, { 55, 59, 62, 65 }, { 48, 52, 55, 60 } }, 0.8);
+    //! [WHEN] Detected automatically
+    const auto rg = kd::detect(g, KD_RATE);
+    const auto rd = kd::detect(d, KD_RATE);
+    const auto rc = kd::detect(c, KD_RATE);
+    //! [THEN] Polyphony is analysed spectrally and the keys are right
+    EXPECT_FALSE(rg.usedPitchTrack);
+    EXPECT_FALSE(rd.usedPitchTrack);
+    EXPECT_EQ(rg.key.tonic, 7) << describe(rg);
+    EXPECT_FALSE(rg.key.minor) << describe(rg);
+    EXPECT_EQ(rd.key.tonic, 2) << describe(rd);
+    EXPECT_TRUE(rd.key.minor) << describe(rd);
+    EXPECT_EQ(rc.key.tonic, 0) << describe(rc);
+    EXPECT_FALSE(rc.key.minor) << describe(rc);
+    //! [AND] Temperley profiles agree
+    kd::Settings t;
+    t.profile = kd::Profile::Temperley;
+    EXPECT_EQ(kd::detect(g, KD_RATE, t).key.tonic, 7);
+    EXPECT_EQ(kd::detect(d, KD_RATE, t).key.tonic, 2);
+}
+
+TEST(KeyDetectTests, EstimatesTheTuningReference)
+{
+    const double a442 = 1200.0 * std::log2(442.0 / 440.0); // +7.85 cents
+    //! [GIVEN] The same tune at A = 440, A = 442 and A = 435, sung (YIN) and as chords (spectrum)
+    const auto r440 = kd::detect(melody(majorTune(57)), KD_RATE);
+    const auto r442 = kd::detect(melody(majorTune(57), a442), KD_RATE);
+    const auto r435 = kd::detect(melody(majorTune(57), 1200.0 * std::log2(435.0 / 440.0)), KD_RATE);
+    const auto c442 = kd::detect(chords({ { 57, 61, 64 }, { 62, 66, 69 }, { 64, 68, 71 }, { 57, 61, 64 } }, 0.8, a442), KD_RATE);
+    //! [THEN] Offsets within ~2 cents (~0.5 Hz) and the key is still found
+    EXPECT_NEAR(r440.tuningCents, 0.0, 2.0) << describe(r440);
+    EXPECT_NEAR(r442.tuningCents, a442, 2.0) << describe(r442);
+    EXPECT_NEAR(r442.tuningHz, 442.0, 0.6);
+    EXPECT_NEAR(r435.tuningHz, 435.0, 0.6) << describe(r435);
+    EXPECT_NEAR(c442.tuningHz, 442.0, 0.6) << describe(c442);
+    EXPECT_EQ(r442.key.tonic, 9);
+    EXPECT_FALSE(r442.key.minor);
+    //! [AND] The histogram stays at A440 when another offset is not clearly more common
+    EXPECT_DOUBLE_EQ(kd::estimateTuning({ { 0.0, 1.0 }, { 40.0, 1.0 } }), 0.0);
+}
+
+TEST(KeyDetectTests, SnapsToScaleNotes)
+{
+    const unsigned cMajor = kd::scaleMask({ 0, false, 1.0 });
+    // E4 = -500 cents from A4, Eb4 = -600
+    EXPECT_DOUBLE_EQ(kd::snapCents(-555.0, 0xFFFu, 0.0), -600.0);  // chromatic: Eb
+    EXPECT_DOUBLE_EQ(kd::snapCents(-555.0, cMajor, 0.0), -500.0);  // C major: E (Eb is not in the scale)
+    EXPECT_DOUBLE_EQ(kd::snapCents(-497.0, cMajor, 8.0), -492.0);  // tuning offset moves the grid
+    // A minor keeps the leading tone G#
+    const unsigned aMinor = kd::scaleMask({ 9, true, 1.0 });
+    EXPECT_TRUE(aMinor & (1u << 8));
+    EXPECT_TRUE(aMinor & (1u << 7));
+    EXPECT_FALSE(aMinor & (1u << 1));
+}
+
+TEST(KeyDetectTests, AtonalMaterialHasLowConfidence)
+{
+    //! [GIVEN] A chromatic scale: all twelve notes equally
+    std::vector<std::pair<double, double> > n;
+    for (int k = 0; k < 24; ++k) {
+        n.push_back({ 60 + (k % 12), 0.25 });
+    }
+    const auto r = kd::detect(melody(n), KD_RATE);
+    EXPECT_LT(r.confidence, 0.3) << describe(r);
+    EXPECT_LT(r.scaleConfidence, 0.3) << describe(r);
+    //! [AND] Silence is not a key
+    EXPECT_FALSE(kd::detect(std::vector<float>(size_t(KD_RATE), 0.0f), KD_RATE).valid);
+}
+
+namespace {
+//! Phrases of `notes` (midi) with 0.5 s gaps; `last` is the final phrase's sustained note (cents from A440 grid)
+std::vector<float> keyContext(const std::vector<std::vector<int> >& phrases, double lastMidi, double lastCents)
+{
+    std::vector<std::pair<double, double> > n;
+    for (const auto& ph : phrases) {
+        for (int m : ph) {
+            n.push_back({ m, 2.0 / double(ph.size()) });
+        }
+        n.push_back({ -1, 0.5 });
+    }
+    n.push_back({ lastMidi + lastCents / 100.0, 2.0 });
+    return melody(n);
+}
+}
+
+TEST(AutoCompKeyTests, InScaleTakeBeatsChromaticallyFineOutOfKeyTake)
+{
+    //! [GIVEN] Three phrases establishing C major, identical on both lanes, then a held note:
+    //! main sings Eb4 10 cents flat (in tune chromatically, out of key), the take sings E4 in tune
+    const std::vector<std::vector<int> > ctx { { 60, 62, 64, 65, 67, 65, 64, 62 }, { 60, 64, 67, 72, 67, 64, 60, 60 },
+                                               { 65, 69, 67, 64, 62, 59, 60, 60 } };
+    const std::vector<std::vector<float> > lanes { keyContext(ctx, 63, -10.0), keyContext(ctx, 64, 0.0) };
+    auto s = oneSegment();
+    s.minSegmentSec = 2.0;
+
+    //! [WHEN] Auto-comp with scale snapping
+    au::au3::autocomp::Analysis a;
+    const auto segs = au::au3::autocomp::compute(lanes, KD_RATE, s, &a);
+
+    //! [THEN] C major is detected and the in-key take wins the last phrase
+    ASSERT_TRUE(a.key.valid);
+    EXPECT_EQ(a.key.key.tonic, 0) << describe(a.key);
+    EXPECT_TRUE(a.grid.scale) << describe(a.key);
+    ASSERT_FALSE(segs.empty());
+    EXPECT_EQ(segs.back().lane, 1) << "main " << segs.back().metrics[0].intonationCents << " take "
+                                   << segs.back().metrics[1].intonationCents;
+    for (size_t i = 0; i + 1 < segs.size(); ++i) {
+        EXPECT_EQ(segs[i].lane, 0); // identical context phrases: no switching
+    }
+
+    //! [AND] On the chromatic A440 grid the consensus (-555 cents) snaps to Eb, so the out-of-key take is kept
+    s.scaleSnapping = false;
+    au::au3::autocomp::Analysis chromatic;
+    const auto segsChromatic = au::au3::autocomp::compute(lanes, KD_RATE, s, &chromatic);
+    EXPECT_FALSE(chromatic.grid.scale);
+    EXPECT_EQ(segsChromatic.back().lane, 0);
+
+    //! [AND] A known (project) key is used without detection
+    s.scaleSnapping = true;
+    s.key = kd::KeyCandidate { 0, false, 1.0 };
+    au::au3::autocomp::Analysis known;
+    EXPECT_EQ(au::au3::autocomp::compute(lanes, KD_RATE, s, &known).back().lane, 1);
+    EXPECT_FALSE(known.key.valid);
+    EXPECT_TRUE(known.grid.scale);
+}
+
+TEST(AutoCompKeyTests, LowKeyConfidenceFallsBackToChromatic)
+{
+    //! [GIVEN] Chromatic, key-less material on both lanes; the take sings an F# in tune, main 35 cents sharp
+    const std::vector<std::vector<int> > ctx { { 60, 61, 62, 63, 64, 65, 66, 67 }, { 68, 69, 70, 71, 72, 71, 70, 69 },
+                                               { 68, 67, 66, 65, 64, 63, 62, 61 } };
+    const std::vector<std::vector<float> > lanes { keyContext(ctx, 66, 35.0), keyContext(ctx, 66, 0.0) };
+    auto s = oneSegment();
+    s.minSegmentSec = 2.0;
+    au::au3::autocomp::Analysis a;
+    const auto segs = au::au3::autocomp::compute(lanes, KD_RATE, s, &a);
+    //! [THEN] No scale is imposed (chromatic notes are not pulled to a scale) and plain intonation still decides
+    EXPECT_LT(a.key.scaleConfidence, s.keyMinConfidence) << describe(a.key);
+    EXPECT_FALSE(a.grid.scale);
+    EXPECT_EQ(segs.back().lane, 1);
+    for (const auto& seg : segs) {
+        EXPECT_LT(seg.metrics[1].intonationCents, 10.0);
+    }
+}
+
+TEST_F(Au3RecordTests, DetectKeyStoresTheProjectKey)
+{
+    //! [GIVEN] A track with a tune in D minor at A = 442
+    const auto x = melody(minorTune(62), 1200.0 * std::log2(442.0 / 440.0), TEST_SAMPLE_RATE);
+    auto* t = addSelectedMonoTrack();
+    t->Append(0, reinterpret_cast<constSamplePtr>(x.data()), floatSample, x.size());
+    t->Flush();
+    //! [WHEN] Detect key on the whole track
+    const KeyDetection r = m_record->detectKey(t->GetId(), 0.0, 0.0, true);
+    //! [THEN] Reported and stored as the project key
+    ASSERT_TRUE(r.valid);
+    EXPECT_EQ(r.keyName, "D minor");
+    EXPECT_NEAR(r.tuningHz, 442.0, 0.6);
+    const auto& k = au::au3::ProjectKey::Get(projectRef()).key();
+    ASSERT_TRUE(k.has_value());
+    EXPECT_EQ(k->tonic, 2);
+    EXPECT_TRUE(k->minor);
+    //! [AND] Saved as project attributes
+    XMLStringWriter w;
+    w.StartTag(wxT("project"));
+    ProjectFileIORegistry::Get().CallWriters(projectRef(), w);
+    w.EndTag(wxT("project"));
+    EXPECT_NE(w.Find(wxT("musical_key_tonic=\"2\"")), wxNOT_FOUND) << w.ToStdString();
+    EXPECT_NE(w.Find(wxT("musical_key_minor=\"1\"")), wxNOT_FOUND);
+}
+
+//! Not a test: writes /workspace/key_demo.aup4 (a D minor tune at A = 442) for the Detect key screenshot
+TEST_F(Au3RecordTests, DISABLED_MakeKeyDemoProject)
+{
+    const double a442 = 1200.0 * std::log2(442.0 / 440.0);
+    auto notes = minorTune(62);
+    const auto again = minorTune(62);
+    notes.push_back({ -1, 0.5 });
+    notes.insert(notes.end(), again.begin(), again.end());
+    const auto x = melody(notes, a442, TEST_SAMPLE_RATE, 0.25f);
+    auto* t = addSelectedMonoTrack();
+    t->Append(0, reinterpret_cast<constSamplePtr>(x.data()), floatSample, x.size());
+    t->Flush();
+    t->SetName("Lead Vocal");
+    auto lastSaved = TrackList::Create(nullptr);
+    ASSERT_TRUE(ProjectFileIO::Get(projectRef()).SaveProject(wxString(m_workingProjectPath), lastSaved.get()));
+    m_au3ProjectAccessor->clearSavedState();
+    m_au3ProjectAccessor->close();
+    ASSERT_TRUE(testtools::copyFile(m_workingProjectPath, "/workspace/key_demo.aup4"));
+    m_au3ProjectAccessor.reset();
+}
 }

@@ -43,7 +43,23 @@ void RecordCommandsState::init()
         updateCommandStates({ RECORD_TOGGLE_INPUT_MONITORING_COMMAND });
     });
 
+    // Take and key commands depend on the focused / selected track and the time selection
+    if (selectionController()) {
+        selectionController()->selectedTracksChanged().onReceive(this, [this](const auto&) { updateTrackCommandStates(); });
+        selectionController()->dataSelectedStartTimeChanged().onReceive(this, [this](const auto&) { updateTrackCommandStates(); });
+        selectionController()->dataSelectedEndTimeChanged().onReceive(this, [this](const auto&) { updateTrackCommandStates(); });
+    }
+    if (trackNavigationController()) {
+        trackNavigationController()->focusedTrackChanged().onReceive(this, [this](const auto&, bool) { updateTrackCommandStates(); });
+    }
+
     updateCommandStates();
+}
+
+void RecordCommandsState::updateTrackCommandStates()
+{
+    updateCommandStates({ RECORD_NEXT_TAKE_COMMAND, RECORD_PREVIOUS_TAKE_COMMAND, RECORD_ACTIVATE_TAKE_COMMAND,
+                          RECORD_COMP_TAKE_SELECTION_COMMAND, RECORD_AUTO_COMP_COMMAND, RECORD_DETECT_KEY_COMMAND });
 }
 
 void RecordCommandsState::deinit()
@@ -95,6 +111,9 @@ CommandState RecordCommandsState::commandState(const Command& command) const
     }
     if (command == RECORD_COMP_TAKE_SELECTION_COMMAND) {
         return CommandState(controller()->canSwitchTake(TakeSwitch::CompSelection));
+    }
+    if (command == RECORD_DETECT_KEY_COMMAND) {
+        return CommandState(controller()->canDetectKey());
     }
     if (command == RECORD_AUTO_COMP_COMMAND) {
         return CommandState(controller()->canSwitchTake(TakeSwitch::AutoComp));

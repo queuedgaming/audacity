@@ -4,9 +4,11 @@
 #pragma once
 
 #include <cstddef>
+#include <optional>
 #include <vector>
 
 #include "pitch.h"
+#include "keydetect.h"
 
 //! Automatic comping: pure, deterministic DSP heuristics (no project or track types),
 //! so it can be unit-tested on synthetic buffers.
@@ -24,6 +26,25 @@ struct Settings {
     double pitchWeight = 1.0;        //!< scales the whole pitch penalty
     double jitterToleranceCents = 6.0;     //!< short-term f0 residual tolerated (5-7 Hz vibrato mostly passes the 50 ms smoother)
     double intonationToleranceCents = 10.0; //!< deviation from the reference note tolerated
+
+    // Key-aware intonation (keydetect.h): the reference note is snapped to the detected scale
+    bool scaleSnapping = true;
+    double keyMinConfidence = 0.3;   //!< below this scale confidence, fall back to the chromatic grid
+    std::optional<keydetect::KeyCandidate> key; //!< known key (e.g. the project key): skips detection
+    std::optional<double> tuningCents;          //!< known tuning reference (with `key`)
+};
+
+//! Notes intonation is measured against
+struct PitchGrid {
+    unsigned mask = 0xFFFu;   //!< allowed pitch classes (0xFFF = chromatic)
+    double tuningCents = 0.0; //!< grid offset from A4 = 440 Hz
+    bool scale = false;       //!< true when snapping to a key's scale
+};
+
+//! What compute() decided about key and tuning (for reporting / tests)
+struct Analysis {
+    keydetect::Result key;    //!< detection over all lanes (invalid when a known key was given or pitch is off)
+    PitchGrid grid;
 };
 
 //! Per-take, per-segment metrics and the resulting score (higher is better)
@@ -37,7 +58,7 @@ struct Metrics {
     // Pitch (zero when pitch scoring is off or the segment is not voiced)
     double voicedFraction = 0.0;   //!< frames this lane is voiced
     double jitterCents = 0.0;      //!< RMS of f0 minus its 50 ms moving average (fast wobble; vibrato mostly passes)
-    double intonationCents = 0.0;  //!< mean |200 ms-smoothed f0 - reference note|
+    double intonationCents = 0.0;  //!< mean |210 ms robust (median-gated) average f0 - reference note|
     double missedFraction = 0.0;   //!< frames where most other lanes are voiced but this one is not
     double pitchPenalty = 0.0;
     double score = 0.0;
@@ -60,10 +81,15 @@ std::vector<size_t> findBoundaries(const std::vector<std::vector<float> >& lanes
 
 //! Pitch metrics for every lane over frames [f0, f1) of per-lane YIN tracks (same hop, same start).
 //! The reference note per frame is the median of the voiced lanes' smoothed pitch (consensus across
-//! takes) snapped to the nearest equal-tempered semitone (A4 = 440 Hz). Adds the penalty to `metrics`.
+//! takes) snapped to the nearest note of `grid` (the detected scale, or the chromatic grid; both shifted
+//! by the tuning reference). Adds the penalty to `metrics`.
 void scorePitch(const std::vector<std::vector<pitch::Frame> >& tracks, size_t f0, size_t f1,
-                std::vector<Metrics>& metrics, const Settings& s);
+                std::vector<Metrics>& metrics, const Settings& s, const PitchGrid& grid = {});
+
+//! Grid for the given settings and pooled YIN tracks: detected (or known) key's scale when confident, else chromatic
+PitchGrid chooseGrid(const std::vector<std::vector<pitch::Frame> >& tracks, const Settings& s, keydetect::Result* detected = nullptr);
 
 //! Full run: boundaries, per-segment scores, choice with hysteresis. All lanes must have the same length.
-std::vector<Segment> compute(const std::vector<std::vector<float> >& lanes, double rate, const Settings& s);
+std::vector<Segment> compute(const std::vector<std::vector<float> >& lanes, double rate, const Settings& s,
+                             Analysis* analysis = nullptr);
 }

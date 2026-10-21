@@ -27,5 +27,6 @@ public:
 
     MOCK_METHOD(bool, canSwitchTake, (trackedit::TrackId, TakeSwitch), (const, override));
     MOCK_METHOD(muse::Ret, switchTake, (trackedit::TrackId, TakeSwitch), (override));
+    MOCK_METHOD(KeyDetection, detectKey, (trackedit::TrackId, double, double, bool), (override));
 };
 }

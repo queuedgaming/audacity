@@ -145,6 +145,50 @@ std::vector<size_t> au::au3::autocomp::findBoundaries(const std::vector<std::vec
 namespace {
 constexpr double NaN = std::numeric_limits<double>::quiet_NaN();
 
+//! Moving median of the voiced (non-NaN) values within +-half frames: follows note changes without
+//! blurring them (a mean smears short notes into their neighbours)
+std::vector<double> smoothMedian(const std::vector<double>& c, size_t half)
+{
+    std::vector<double> out(c.size(), NaN), v;
+    for (size_t i = 0; i < c.size(); ++i) {
+        if (std::isnan(c[i])) {
+            continue;
+        }
+        v.clear();
+        for (size_t k = i >= half ? i - half : 0; k <= std::min(c.size() - 1, i + half); ++k) {
+            if (!std::isnan(c[k])) {
+                v.push_back(c[k]);
+            }
+        }
+        std::nth_element(v.begin(), v.begin() + v.size() / 2, v.end());
+        out[i] = v[v.size() / 2];
+    }
+    return out;
+}
+
+//! Moving average within +-half frames of only the values within `range` cents of the moving median:
+//! averages vibrato out like a mean, but does not smear neighbouring notes (>= a semitone away) in
+std::vector<double> smoothRobust(const std::vector<double>& c, size_t half, double range)
+{
+    const auto med = smoothMedian(c, half);
+    std::vector<double> out(c.size(), NaN);
+    for (size_t i = 0; i < c.size(); ++i) {
+        if (std::isnan(c[i])) {
+            continue;
+        }
+        double acc = 0.0;
+        int n = 0;
+        for (size_t k = i >= half ? i - half : 0; k <= std::min(c.size() - 1, i + half); ++k) {
+            if (!std::isnan(c[k]) && std::fabs(c[k] - med[i]) <= range) {
+                acc += c[k];
+                ++n;
+            }
+        }
+        out[i] = n ? acc / n : med[i];
+    }
+    return out;
+}
+
 //! Moving average of the voiced (non-NaN) values within +-half frames
 std::vector<double> smooth(const std::vector<double>& c, size_t half)
 {
@@ -168,7 +212,7 @@ std::vector<double> smooth(const std::vector<double>& c, size_t half)
 }
 
 void au::au3::autocomp::scorePitch(const std::vector<std::vector<pitch::Frame> >& tracks, size_t f0, size_t f1,
-                                   std::vector<Metrics>& metrics, const Settings& s)
+                                   std::vector<Metrics>& metrics, const Settings& s, const PitchGrid& grid)
 {
     const size_t nl = tracks.size();
     if (nl == 0 || metrics.size() != nl) {
@@ -192,7 +236,7 @@ void au::au3::autocomp::scorePitch(const std::vector<std::vector<pitch::Frame> >
             }
         }
         fast[l] = smooth(cents[l], 2);
-        slow[l] = smooth(cents[l], 10);
+        slow[l] = smoothRobust(cents[l], 10, 75.0);
     }
     // Consensus reference note per frame
     std::vector<double> reference(len, NaN);
@@ -211,7 +255,7 @@ void au::au3::autocomp::scorePitch(const std::vector<std::vector<pitch::Frame> >
         }
         std::sort(v.begin(), v.end());
         const double med = v.size() % 2 ? v[v.size() / 2] : 0.5 * (v[v.size() / 2 - 1] + v[v.size() / 2]);
-        reference[i] = 100.0 * std::round(med / 100.0);
+        reference[i] = keydetect::snapCents(med, grid.mask, grid.tuningCents);
         if (2 * v.size() >= nl) {
             ++voicedFrames;
         }
@@ -254,8 +298,46 @@ void au::au3::autocomp::scorePitch(const std::vector<std::vector<pitch::Frame> >
     }
 }
 
+au::au3::autocomp::PitchGrid au::au3::autocomp::chooseGrid(const std::vector<std::vector<pitch::Frame> >& tracks,
+                                                            const Settings& s, keydetect::Result* detected)
+{
+    PitchGrid g;
+    if (s.key) {
+        g.tuningCents = s.tuningCents.value_or(0.0);
+        if (s.scaleSnapping) {
+            g.mask = keydetect::scaleMask(*s.key);
+            g.scale = true;
+        }
+        return g;
+    }
+    const auto r = keydetect::fromPitchTracks(tracks);
+    if (detected) {
+        *detected = r;
+    }
+    // Tuning reference: only when every lane agrees (a band tuned to A = 442). Takes that disagree are
+    // an intonation difference to be scored, not a reference to adopt.
+    double lo = 1e9, hi = -1e9, sum = 0.0;
+    int n = 0;
+    for (const auto& t : tracks) {
+        const auto lane = keydetect::fromPitchTracks({ t });
+        if (lane.valid) {
+            lo = std::min(lo, lane.tuningCents);
+            hi = std::max(hi, lane.tuningCents);
+            sum += lane.tuningCents;
+            ++n;
+        }
+    }
+    const double tuning = n > 0 && hi - lo <= 10.0 ? sum / n : 0.0;
+    g.tuningCents = s.tuningCents.value_or(tuning);
+    if (s.scaleSnapping && r.valid && r.scaleConfidence >= s.keyMinConfidence) {
+        g.mask = keydetect::scaleMask(r.key);
+        g.scale = true;
+    }
+    return g;
+}
+
 std::vector<Segment> au::au3::autocomp::compute(const std::vector<std::vector<float> >& lanes, double rate,
-                                                const Settings& s)
+                                                const Settings& s, Analysis* analysis)
 {
     std::vector<Segment> result;
     if (lanes.empty() || lanes.front().empty()) {
@@ -274,6 +356,15 @@ std::vector<Segment> au::au3::autocomp::compute(const std::vector<std::vector<fl
         for (const auto& lane : lanes) {
             tracks.push_back(pitch::yin(lane, rate, ps));
         }
+    }
+    PitchGrid grid;
+    keydetect::Result detected;
+    if (s.pitchEnabled) {
+        grid = chooseGrid(tracks, s, &detected);
+    }
+    if (analysis) {
+        analysis->key = detected;
+        analysis->grid = grid;
     }
     auto frameAt = [&](size_t sample) -> size_t {
         if (tracks.empty()) {
@@ -296,7 +387,7 @@ std::vector<Segment> au::au3::autocomp::compute(const std::vector<std::vector<fl
             seg.metrics.push_back(analyse(lanes[l], seg.start, seg.end, rate, s));
         }
         if (s.pitchEnabled) {
-            scorePitch(tracks, frameAt(seg.start), frameAt(seg.end), seg.metrics, s);
+            scorePitch(tracks, frameAt(seg.start), frameAt(seg.end), seg.metrics, s, grid);
         }
         for (size_t l = 0; l < lanes.size(); ++l) {
             if (seg.metrics[l].score > seg.metrics[best].score) {
