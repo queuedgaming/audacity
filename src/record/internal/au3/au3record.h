@@ -62,6 +62,7 @@ public:
     muse::async::Notification projectKeyChanged() const override;
     std::string projectKeyLabel(const std::optional<ProjectKeyInfo>& key) const override;
     std::string lastAutoCompKey() const override { return m_lastAutoCompKey; }
+    muse::Ret setClipFades(const trackedit::ClipKey& clip, double fadeIn, double fadeOut, int curve) override;
 
     //! Stop time for lead-in recording: selection end when punch-out applies, else DBL_MAX
     double punchOutTime(double punchInTime) const;

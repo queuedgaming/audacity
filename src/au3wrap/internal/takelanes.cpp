@@ -377,31 +377,84 @@ wxString takelanes::compLabel(int index)
 }
 
 namespace {
-//! Blend `main` with `other` over [from, from + len) samples: weight of main's own audio goes 0 -> 1
-//! (fadeIn) or 1 -> 0 (fade out), the rest comes from `other`
-void blend(WaveTrack& main, const WaveTrack& other, sampleCount from, size_t len, bool fadeIn)
+//! Lossless exchange of the clips of `a` and `b` within [s, e]: both tracks are split at s and e
+//! (splits keep the hidden audio beyond the cut as handles) and whole clips change tracks, so not
+//! a single sample is rewritten.
+void swapClips(WaveTrack& a, WaveTrack& b, double s, double e)
 {
-    if (len == 0) {
-        return;
+    for (auto* t : { &a, &b }) {
+        t->SplitAt(s);
+        t->SplitAt(e);
     }
-    const size_t nCh = main.NChannels();
-    std::vector<std::vector<float> > mine(nCh, std::vector<float>(len)), theirs(nCh, std::vector<float>(len));
-    std::vector<float*> mp(nCh), tp(nCh);
-    for (size_t c = 0; c < nCh; ++c) {
-        mp[c] = mine[c].data();
-        tp[c] = theirs[c].data();
-    }
-    main.GetFloats(0, nCh, mp.data(), from, len, false, FillFormat::fillZero, false);
-    other.GetFloats(0, std::min(nCh, other.NChannels()), tp.data(), from, len, false, FillFormat::fillZero, false);
-    for (size_t c = 0; c < nCh; ++c) {
-        const float* src = c < other.NChannels() ? tp[c] : tp[0];
-        for (size_t i = 0; i < len; ++i) {
-            const float w = (static_cast<float>(i) + 0.5f) / static_cast<float>(len);
-            const float g = fadeIn ? w : 1.0f - w;
-            mp[c][i] = mp[c][i] * g + src[i] * (1.0f - g);
+    const auto inside = [s, e](const WaveTrack::Interval& c) {
+        return c.GetPlayStartTime() >= s - 1e-9 && c.GetPlayEndTime() <= e + 1e-9;
+    };
+    std::vector<WaveTrack::IntervalHolder> fromA, fromB;
+    for (const auto& c : a.Intervals()) {
+        if (inside(*c)) {
+            fromA.push_back(c);
         }
     }
-    (void)main.SetFloats(mp.data(), from, len);
+    for (const auto& c : b.Intervals()) {
+        if (inside(*c)) {
+            fromB.push_back(c);
+        }
+    }
+    std::vector<WaveTrack::IntervalHolder> toB, toA;
+    for (const auto& c : fromA) {
+        toB.push_back(a.CopyClip(*c, true));
+        a.RemoveInterval(c);
+    }
+    for (const auto& c : fromB) {
+        toA.push_back(b.CopyClip(*c, true));
+        b.RemoveInterval(c);
+    }
+    for (const auto& c : toA) {
+        a.InsertInterval(c, false);
+    }
+    for (const auto& c : toB) {
+        b.InsertInterval(c, false);
+    }
+}
+
+//! True if the first `n` samples of `clip` are exactly what `left` holds beyond its end, i.e. the
+//! boundary is a plain cut through continuous audio and needs no crossfade
+bool continuesSeamlessly(const WaveTrack::Interval& left, const WaveTrack::Interval& clip, size_t n)
+{
+    if (n == 0 || left.GetRightHandleSampleCount() < sampleCount { n } || left.NChannels() != clip.NChannels()
+        || left.GetStretchRatio() != 1.0 || clip.GetStretchRatio() != 1.0) {
+        return false;
+    }
+    std::vector<float> x(n), y(n);
+    for (size_t ch = 0; ch < clip.NChannels(); ++ch) {
+        left.GetSampleView(ch, left.GetVisibleSampleCount(), n, false).Copy(x.data(), n);
+        clip.GetSampleView(ch, 0, n, false).Copy(y.data(), n);
+        if (x != y) {
+            return false;
+        }
+    }
+    return true;
+}
+
+//! Fade-in of `n` samples on the clip of `track` starting at t, crossfading with the abutting clip's
+//! handle; none if the boundary is seamless (so comping back renders bit-exactly)
+void setBoundaryFade(WaveTrack& track, double t, size_t n)
+{
+    WaveTrack::IntervalHolder clip, left;
+    for (const auto& c : track.Intervals()) {
+        if (std::abs(c->GetPlayStartTime() - t) < 1e-9) {
+            clip = c;
+        } else if (std::abs(c->GetPlayEndTime() - t) < 1e-9) {
+            left = c;
+        }
+    }
+    if (!clip) {
+        return;
+    }
+    const size_t len = std::min<size_t>(n, clip->GetVisibleSampleCount().as_size_t());
+    const bool seamless = left && continuesSeamlessly(*left, *clip, len);
+    clip->SetFadeInDuration(seamless ? 0.0 : len / track.GetRate());
+    clip->SetFadeCurve(0);
 }
 }
 
@@ -417,26 +470,27 @@ bool takelanes::compRange(AudacityProject& project, WaveTrack& mainTrack, WaveTr
     if (t1 <= t0) {
         return false;
     }
-    // Keep the comped region a separate clip so it can show where it came from
-    swapRegion(mainTrack, take, t0, t1, /*merge*/ false);
+    swapClips(mainTrack, take, t0, t1);
 
+    // The comped region stays separate clips showing where they came from
     const auto name = compLabel(TakeLaneInfo::Get(take).takeIndex);
     for (const auto& clip : mainTrack.Intervals()) {
-        const double cs = clip->GetPlayStartTime();
-        const double ce = clip->GetPlayEndTime();
-        if (cs >= t0 - 1e-9 && ce <= t1 + 1e-9) {
+        if (clip->GetPlayStartTime() >= t0 - 1e-9 && clip->GetPlayEndTime() <= t1 + 1e-9) {
             clip->SetName(name);
         }
     }
-
-    // Crossfades on the main track only: the take keeps the replaced audio bit-exact
-    const auto s0 = mainTrack.TimeToLongSamples(t0);
-    const auto s1 = mainTrack.TimeToLongSamples(t1);
-    const auto total = (s1 - s0).as_size_t();
+    // Take lanes keep plain, unfaded audio; fades only live on the main track's comp boundaries
+    for (const auto& clip : take.Intervals()) {
+        if (clip->GetPlayStartTime() >= t0 - 1e-9 && clip->GetPlayEndTime() <= t1 + 1e-9) {
+            clip->SetFadeInDuration(0.0);
+            clip->SetFadeOutDuration(0.0);
+        }
+    }
+    const auto total = (mainTrack.TimeToLongSamples(t1) - mainTrack.TimeToLongSamples(t0)).as_size_t();
     const size_t fade = std::min<size_t>(total / 2,
                                          static_cast<size_t>(std::max(0.0, crossfade) * mainTrack.GetRate() + 0.5));
-    blend(mainTrack, take, s0, fade, true);
-    blend(mainTrack, take, s1 - fade, fade, false);
+    setBoundaryFade(mainTrack, t0, fade);
+    setBoundaryFade(mainTrack, t1, fade);
     return true;
 }
 

@@ -56,6 +56,9 @@ public:
     virtual std::string projectKeyLabel(const std::optional<ProjectKeyInfo>& key) const = 0;
     //! What the last auto-comp scored intonation against ("project key D min, A442", "detected ...", "no clear key, chromatic")
     virtual std::string lastAutoCompKey() const = 0;
+
+    //! Non-destructive clip fades (seconds; curve 0 linear, 1 equal power), one undo step
+    virtual muse::Ret setClipFades(const trackedit::ClipKey& clip, double fadeIn, double fadeOut, int curve) = 0;
 };
 
 using IAudioRecordPtr = std::shared_ptr<IRecord>;

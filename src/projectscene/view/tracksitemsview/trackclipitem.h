@@ -18,6 +18,9 @@ class TrackClipItem : public ViewTrackItem
 
     Q_PROPERTY(bool isGrouped READ isGrouped NOTIFY groupIdChanged FINAL)
     Q_PROPERTY(int pitch READ pitch NOTIFY pitchChanged FINAL)
+    Q_PROPERTY(double fadeIn READ fadeIn NOTIFY fadesChanged FINAL)
+    Q_PROPERTY(double fadeOut READ fadeOut NOTIFY fadesChanged FINAL)
+    Q_PROPERTY(int fadeCurve READ fadeCurve NOTIFY fadesChanged FINAL)
     Q_PROPERTY(int speedPercentage READ speedPercentage NOTIFY speedPercentageChanged FINAL)
     Q_PROPERTY(bool isPitchModified READ isPitchModified NOTIFY pitchChanged FINAL)
     Q_PROPERTY(bool isSpeedModified READ isSpeedModified NOTIFY speedPercentageChanged FINAL)
@@ -28,6 +31,10 @@ public:
 
     void setClip(const trackedit::Clip& clip);
 
+    double fadeIn() const { return m_fadeIn; }
+    double fadeOut() const { return m_fadeOut; }
+    int fadeCurve() const { return m_fadeCurve; }
+
     bool isGrouped() const;
 
     int pitch() const;
@@ -37,6 +44,7 @@ public:
     double speed() const;
 
 signals:
+    void fadesChanged();
     void groupIdChanged();
     void pitchChanged();
     void speedPercentageChanged();
@@ -45,6 +53,9 @@ signals:
 private:
     int m_groupId = -1;
     int m_pitch = 0;
+    double m_fadeIn = 0.0;
+    double m_fadeOut = 0.0;
+    int m_fadeCurve = 0;
     double m_speed = 1.0;
 };
 }

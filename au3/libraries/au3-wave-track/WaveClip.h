@@ -436,6 +436,16 @@ public:
      */
     bool SetCentShift(int cents);
     int GetCentShift() const override;
+
+    //! Non-destructive fades (seconds of play time; see ClipInterface). Saved with the clip.
+    double GetFadeInDuration() const override { return mFadeIn; }
+    double GetFadeOutDuration() const override { return mFadeOut; }
+    int GetFadeCurve() const override { return mFadeCurve; }
+    void SetFadeInDuration(double seconds) { mFadeIn = std::max(0.0, seconds); }
+    void SetFadeOutDuration(double seconds) { mFadeOut = std::max(0.0, seconds); }
+    void SetFadeCurve(int curve) { mFadeCurve = curve == 1 ? 1 : 0; }
+    sampleCount GetLeftHandleSampleCount() const override;
+    sampleCount GetRightHandleSampleCount() const override;
     [[nodiscard]] Observer::Subscription
     SubscribeToCentShiftChange(std::function<void(int)> cb) const override;
 
@@ -997,6 +1007,10 @@ private:
 
     PitchAndSpeedPreset mPitchAndSpeedPreset { PitchAndSpeedPreset::Default };
     int mCentShift { 0 };
+
+    double mFadeIn { 0.0 };
+    double mFadeOut { 0.0 };
+    int mFadeCurve { 0 };
 
     double mClipStretchRatio = 1.;
     bool mStretchToMatchProjectTempo = true;

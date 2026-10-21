@@ -58,6 +58,17 @@ public:
 
     virtual PitchAndSpeedPreset GetPitchAndSpeedPreset() const = 0;
 
+    //! Non-destructive fades, in seconds of play time, applied when rendering (playback, export, mix).
+    //! A fade next to an abutting clip that has hidden audio (a handle) beyond its edge becomes a
+    //! crossfade with that audio, see ClipSegment.
+    virtual double GetFadeInDuration() const { return 0.0; }
+    virtual double GetFadeOutDuration() const { return 0.0; }
+    //! 0: linear (constant amplitude), 1: equal power (sin/cos)
+    virtual int GetFadeCurve() const { return 0; }
+    //! Hidden samples before the play start / after the play end (trimmed but kept)
+    virtual sampleCount GetLeftHandleSampleCount() const { return 0; }
+    virtual sampleCount GetRightHandleSampleCount() const { return 0; }
+
     [[nodiscard]] virtual Observer::Subscription
     SubscribeToPitchAndSpeedPresetChange(
         std::function<void(PitchAndSpeedPreset)> cb) const = 0;

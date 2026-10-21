@@ -41,6 +41,9 @@
 #include "au3-track/PendingTracks.h"
 #include "au3-project-file-io/ProjectFileIO.h"
 #include "au3-wave-track/WaveTrack.h"
+#include "au3-wave-track/WaveClip.h"
+#include "au3-stretching-sequence/StretchingSequence.h"
+#include "au3-xml/XMLAttributeValueView.h"
 
 using ::testing::_;
 using ::testing::DoAll;
@@ -179,6 +182,34 @@ public:
             track->MoveTo(start);
         }
         return track;
+    }
+
+    //! Mono track holding `samples` from 0
+    Au3WaveTrack* addSamplesTrack(const std::vector<float>& samples)
+    {
+        auto* track = addSelectedMonoTrack();
+        track->Append(0, reinterpret_cast<constSamplePtr>(samples.data()), floatSample, samples.size());
+        track->Flush();
+        return track;
+    }
+
+    //! Stored samples (no fades)
+    static std::vector<float> raw(const Au3WaveTrack& track, sampleCount start, size_t len)
+    {
+        std::vector<float> v(len);
+        float* buffers[] { v.data() };
+        track.GetFloats(0, 1, buffers, start, len, false, FillFormat::fillZero, false);
+        return v;
+    }
+
+    //! What playback, export and mixdown hear: the same StretchingSequence they read
+    static std::vector<float> rendered(const Au3WaveTrack& track, sampleCount start, size_t len)
+    {
+        std::vector<float> v(len);
+        float* buffers[] { v.data() };
+        auto seq = StretchingSequence::Create(track, track.GetClipInterfaces());
+        seq->GetFloats(buffers, start, len, false);
+        return v;
     }
 
     static float sampleAt(const Au3WaveTrack& track, double t)
@@ -549,7 +580,19 @@ TEST_F(Au3RecordTests, SwitchTakeIsUndoableAndChecksTheTarget)
     EXPECT_FALSE(m_record->switchTake(plain->GetId(), TakeSwitch::Next));
 }
 
-TEST_F(Au3RecordTests, CompRangeSwapsOnlyTheRangeLosslesslyWithCrossfades)
+//! Mono noise track (deterministic), `seconds` long from 0
+static std::vector<float> noise(size_t n, unsigned seed)
+{
+    std::vector<float> x(n);
+    unsigned state = seed * 2654435761u + 11u;
+    for (auto& v : x) {
+        state = state * 1664525u + 1013904223u;
+        v = float(int((state >> 8) & 0xFFFF) - 32768) / 65536.0f;
+    }
+    return x;
+}
+
+TEST_F(Au3RecordTests, CompRangeMovesRawAudioAndSetsCrossfadesOnTheBoundaries)
 {
     //! [GIVEN] Main track of 1.0, a take of 2.0 on [2s, 5s]
     Au3WaveTrack* main = addFilledTrack(0.0, 10.0, 1.0f);
@@ -561,32 +604,23 @@ TEST_F(Au3RecordTests, CompRangeSwapsOnlyTheRangeLosslesslyWithCrossfades)
     //! [WHEN] [3s, 4s] of the take is comped with a 10 ms crossfade
     ASSERT_TRUE(takelanes::compRange(projectRef(), *main, *take, 3.0, 4.0, 0.010));
 
-    //! [THEN] Only the range is replaced on the main track
-    EXPECT_FLOAT_EQ(sampleAt(*main, 2.5), 1.0f);
-    EXPECT_FLOAT_EQ(sampleAt(*main, 3.5), 2.0f);
-    EXPECT_FLOAT_EQ(sampleAt(*main, 4.5), 1.0f);
-    EXPECT_FLOAT_EQ(sampleAt(*main, 7.0), 1.0f);
-    //! [AND] The take keeps the replaced main audio, bit-exact, and its own audio elsewhere
-    EXPECT_FLOAT_EQ(sampleAt(*take, 2.5), 2.0f);
-    EXPECT_FLOAT_EQ(sampleAt(*take, 3.0), 1.0f);
-    EXPECT_FLOAT_EQ(sampleAt(*take, 3.5), 1.0f);
-    EXPECT_FLOAT_EQ(sampleAt(*take, 3.9999), 1.0f);
-    EXPECT_FLOAT_EQ(sampleAt(*take, 4.5), 2.0f);
+    //! [THEN] The stored samples are swapped exactly, nothing is faded into them
+    for (double t : { 2.5, 3.0, 3.0001, 3.005, 3.5, 3.9999, 4.0, 4.005, 4.5, 7.0 }) {
+        const bool inside = t >= 3.0 && t < 4.0;
+        EXPECT_EQ(sampleAt(*main, t), inside ? 2.0f : 1.0f) << t;
+        EXPECT_EQ(sampleAt(*take, t), t >= 5.0 ? 0.0f : inside ? 1.0f : 2.0f) << t;
+    }
 
-    //! [AND] Linear crossfades of 441 samples at both boundaries
-    const auto s0 = main->TimeToLongSamples(3.0);
-    const auto s1 = main->TimeToLongSamples(4.0);
-    auto at = [&](sampleCount s) { return sampleAt(*main, main->LongSamplesToTime(s)); };
-    EXPECT_NEAR(at(s0), 1.0f, 0.01f);              // starts on the old audio
-    EXPECT_NEAR(at(s0 + 220), 1.5f, 0.01f);        // halfway
-    EXPECT_FLOAT_EQ(at(s0 + 441), 2.0f);           // fully the take after the fade
-    EXPECT_NEAR(at(s1 - 1), 1.0f, 0.01f);          // back to the old audio at the end
-    EXPECT_NEAR(at(s1 - 221), 1.5f, 0.01f);
-    EXPECT_FLOAT_EQ(at(s1 - 442), 2.0f);
-
-    //! [AND] The comped region is a clip named after its take
+    //! [AND] The comp clip and the clip after it fade in over 441 samples; the take has no fades
+    const double fade = 441.0 / TEST_SAMPLE_RATE;
     int named = 0;
     for (const auto& clip : main->Intervals()) {
+        if (std::abs(clip->GetPlayStartTime() - 3.0) < 1e-6 || std::abs(clip->GetPlayStartTime() - 4.0) < 1e-6) {
+            EXPECT_NEAR(clip->GetFadeInDuration(), fade, 1e-9);
+        } else {
+            EXPECT_EQ(clip->GetFadeInDuration(), 0.0);
+        }
+        EXPECT_EQ(clip->GetFadeOutDuration(), 0.0);
         if (clip->GetName() == wxString("Take 1")) {
             ++named;
             EXPECT_NEAR(clip->GetPlayStartTime(), 3.0, 1e-6);
@@ -594,12 +628,27 @@ TEST_F(Au3RecordTests, CompRangeSwapsOnlyTheRangeLosslesslyWithCrossfades)
         }
     }
     EXPECT_EQ(named, 1);
+    for (const auto& clip : take->Intervals()) {
+        EXPECT_EQ(clip->GetFadeInDuration(), 0.0);
+        EXPECT_EQ(clip->GetFadeOutDuration(), 0.0);
+    }
 
-    //! [WHEN] The same range is comped back from the take
-    ASSERT_TRUE(takelanes::compRange(projectRef(), *main, *take, 3.0, 4.0, 0.0));
-    //! [THEN] The main track is restored exactly
-    for (double t : { 2.5, 3.0, 3.001, 3.5, 3.999, 4.5 }) {
-        EXPECT_FLOAT_EQ(sampleAt(*main, t), 1.0f) << t;
+    //! [AND] Rendering (playback/export/mix path) crossfades with the clip handles, never dipping to silence
+    const auto s0 = main->TimeToLongSamples(3.0);
+    const auto s1 = main->TimeToLongSamples(4.0);
+    const auto out = rendered(*main, s0 - 10, size_t((s1 - s0).as_long_long()) + 1000);
+    auto at = [&](sampleCount s) { return out[size_t((s - (s0 - 10)).as_long_long())]; };
+    EXPECT_FLOAT_EQ(at(s0 - 1), 1.0f);
+    EXPECT_NEAR(at(s0), 1.0f, 0.01f);          // starts on the old main audio (left clip's handle)
+    EXPECT_NEAR(at(s0 + 220), 1.5f, 0.01f);    // halfway
+    EXPECT_FLOAT_EQ(at(s0 + 441), 2.0f);       // fully the take
+    EXPECT_FLOAT_EQ(at(s1 - 1), 2.0f);         // take up to the boundary
+    EXPECT_NEAR(at(s1), 2.0f, 0.01f);          // then the take's handle fades out under the main
+    EXPECT_NEAR(at(s1 + 220), 1.5f, 0.01f);
+    EXPECT_FLOAT_EQ(at(s1 + 441), 1.0f);
+    for (float v : out) {
+        EXPECT_GE(v, 1.0f - 1e-5f);
+        EXPECT_LE(v, 2.0f + 1e-5f);
     }
 
     //! [AND] Invalid requests are refused
@@ -607,20 +656,128 @@ TEST_F(Au3RecordTests, CompRangeSwapsOnlyTheRangeLosslesslyWithCrossfades)
     EXPECT_FALSE(takelanes::compRange(projectRef(), *main, *main, 3.0, 4.0, 0.01));
 }
 
-TEST_F(Au3RecordTests, CompRangeCrossfadeIsAtMostHalfTheRange)
+TEST_F(Au3RecordTests, CompRangeAndBackIsBitExactForMainAndTake)
 {
-    Au3WaveTrack* main = addFilledTrack(0.0, 10.0, 1.0f);
+    //! [GIVEN] Noise on the main track and different noise on a take over [2s, 5s]
+    const size_t n = size_t(10 * TEST_SAMPLE_RATE);
+    Au3WaveTrack* main = addSamplesTrack(noise(n, 1));
     auto snapshot = takelanes::snapshotFrom(*main, 2.0);
     Au3WaveTrack* take = takelanes::preserveAsTake(projectRef(), *main, *snapshot, 2.0, 5.0);
-    fillRegion(*take, *addFilledTrack(0.0, 3.0, 2.0f));
-    // 2 ms range, 10 ms crossfade: the fades meet in the middle and never overshoot
-    ASSERT_TRUE(takelanes::compRange(projectRef(), *main, *take, 3.0, 3.002, 0.010));
-    for (double t = 2.999; t < 3.003; t += 0.0001) {
-        const float v = sampleAt(*main, t);
-        EXPECT_GE(v, 1.0f - 1e-6f) << t;
-        EXPECT_LE(v, 2.0f + 1e-6f) << t;
+    fillRegion(*take, *addSamplesTrack(noise(size_t(3 * TEST_SAMPLE_RATE), 2)));
+    const auto mainRaw = raw(*main, 0, n);
+    const auto takeRaw = raw(*take, main->TimeToLongSamples(2.0), size_t(3 * TEST_SAMPLE_RATE));
+    const auto mainRendered = rendered(*main, 0, n);
+    ASSERT_EQ(mainRendered, mainRaw);
+
+    //! [WHEN] A range is comped (with crossfades) and then comped back
+    ASSERT_TRUE(takelanes::compRange(projectRef(), *main, *take, 3.1234, 4.2, 0.010));
+    EXPECT_NE(rendered(*main, 0, n), mainRaw);
+    ASSERT_TRUE(takelanes::compRange(projectRef(), *main, *take, 3.1234, 4.2, 0.010));
+
+    //! [THEN] Both lanes hold their original samples, bit for bit, and render them unchanged
+    EXPECT_EQ(raw(*main, 0, n), mainRaw);
+    EXPECT_EQ(raw(*take, main->TimeToLongSamples(2.0), size_t(3 * TEST_SAMPLE_RATE)), takeRaw);
+    EXPECT_EQ(rendered(*main, 0, n), mainRaw);
+    for (const auto& clip : main->Intervals()) {
+        EXPECT_EQ(clip->GetFadeInDuration(), 0.0);
     }
-    EXPECT_FLOAT_EQ(sampleAt(*main, 3.003), 1.0f);
+}
+
+TEST_F(Au3RecordTests, ClipFadesAreAppliedAtRenderTime)
+{
+    //! [GIVEN] A lone clip of 1.0 with a 100-sample linear fade-in and a 200-sample equal-power fade-out
+    Au3WaveTrack* track = addFilledTrack(0.0, 1.0, 1.0f);
+    auto clip = *track->Intervals().begin();
+    clip->SetFadeInDuration(100.0 / TEST_SAMPLE_RATE);
+    clip->SetFadeOutDuration(200.0 / TEST_SAMPLE_RATE);
+    clip->SetFadeCurve(1);
+    const size_t len = size_t(TEST_SAMPLE_RATE);
+
+    //! [THEN] Stored samples are untouched
+    EXPECT_EQ(sampleAt(*track, 0.0), 1.0f);
+
+    //! [AND] Rendering applies the gain curves (fade to silence, no neighbour)
+    const auto out = rendered(*track, 0, len);
+    EXPECT_NEAR(out[0], std::sin(0.005 * M_PI / 2), 1e-5); // equal-power applies to both fades
+    EXPECT_NEAR(out[49], std::sin(0.495 * M_PI / 2), 1e-4);
+    EXPECT_FLOAT_EQ(out[100], 1.0f);
+    EXPECT_FLOAT_EQ(out[len - 201], 1.0f);
+    EXPECT_NEAR(out[len - 100], std::sin(99.5 / 200 * M_PI / 2), 1e-4);
+    EXPECT_NEAR(out[len - 1], std::sin(0.5 / 200 * M_PI / 2), 1e-4);
+
+    //! [AND] Rendering from the middle of a fade (playback started mid-clip) applies the same gain
+    const auto mid = rendered(*track, 50, 10);
+    EXPECT_FLOAT_EQ(mid[0], out[50]);
+}
+
+TEST_F(Au3RecordTests, ClipFadesAreSavedWithTheProjectAndUndoable)
+{
+    Au3WaveTrack* track = addFilledTrack(0.0, 2.0, 1.0f);
+    auto clip = *track->Intervals().begin();
+    const trackedit::ClipKey key { track->GetId(), clip->GetId() };
+    const auto trackId = track->GetId();
+
+    //! [WHEN] Fades are set through the record API with the real AU3 undo stack behind the history mock
+    auto& history = ::ProjectHistory::Get(projectRef());
+    history.InitialState();
+    EXPECT_CALL(*m_projectHistory, pushHistoryState(_, _)).Times(1).WillOnce([&history](auto, auto) {
+        history.PushState(::TranslatableString::untranslatable(wxString("Fades")), ::TranslatableString::untranslatable(wxString("Fades")));
+    });
+    ASSERT_TRUE(m_record->setClipFades(key, 0.05, 0.2, 1));
+    EXPECT_DOUBLE_EQ(clip->GetFadeInDuration(), 0.05);
+    EXPECT_DOUBLE_EQ(clip->GetFadeOutDuration(), 0.2);
+    EXPECT_EQ(clip->GetFadeCurve(), 1);
+    //! [AND] Setting the same values again is not another undo step
+    ASSERT_TRUE(m_record->setClipFades(key, 0.05, 0.2, 1));
+
+    //! [THEN] They are written to the project and read back
+    XMLStringWriter xml;
+    track->WriteXML(xml);
+    const std::string s = xml.ToStdString();
+    EXPECT_NE(s.find("fadeIn=\"0.05000000\""), std::string::npos) << s.substr(0, 600);
+    EXPECT_NE(s.find("fadeOut=\"0.20000000\""), std::string::npos);
+    EXPECT_NE(s.find("fadeCurve=\"1\""), std::string::npos);
+    auto restored = track->CopyClip(*clip, true); // copies (undo states, clipboard)
+    EXPECT_DOUBLE_EQ(restored->GetFadeInDuration(), 0.05);
+    EXPECT_DOUBLE_EQ(restored->GetFadeOutDuration(), 0.2);
+    {
+        auto fresh = track->CopyClip(*clip, true);
+        fresh->SetFadeInDuration(0.0);
+        fresh->SetFadeOutDuration(0.0);
+        fresh->SetFadeCurve(0);
+        AttributesList attrs;
+        attrs.emplace_back("fadeIn", XMLAttributeValueView(std::string_view("0.25")));
+        attrs.emplace_back("fadeOut", XMLAttributeValueView(std::string_view("0.5")));
+        attrs.emplace_back("fadeCurve", XMLAttributeValueView(std::string_view("1")));
+        EXPECT_TRUE(fresh->HandleXMLTag("waveclip", attrs));
+        EXPECT_DOUBLE_EQ(fresh->GetFadeInDuration(), 0.25);
+        EXPECT_DOUBLE_EQ(fresh->GetFadeOutDuration(), 0.5);
+        EXPECT_EQ(fresh->GetFadeCurve(), 1);
+    }
+
+    //! [WHEN] Undo
+    UndoManager::Get(projectRef()).Undo([&history](const UndoStackElem& elem) { history.PopState(elem.state); });
+    //! [THEN] The fades are gone
+    Au3WaveTrack* after = DomAccessor::findWaveTrack(projectRef(), trackId);
+    ASSERT_TRUE(after);
+    EXPECT_EQ((*after->Intervals().begin())->GetFadeInDuration(), 0.0);
+    EXPECT_EQ((*after->Intervals().begin())->GetFadeOutDuration(), 0.0);
+    EXPECT_FALSE(history.UndoAvailable());
+}
+
+TEST_F(Au3RecordTests, SplittingAClipKeepsFadesOnTheOuterEdges)
+{
+    Au3WaveTrack* track = addFilledTrack(0.0, 2.0, 1.0f);
+    auto clip = *track->Intervals().begin();
+    clip->SetFadeInDuration(0.1);
+    clip->SetFadeOutDuration(0.2);
+    track->SplitAt(1.0);
+    ASSERT_EQ(track->NIntervals(), 2u);
+    const auto sorted = track->SortedIntervalArray();
+    EXPECT_DOUBLE_EQ(sorted[0]->GetFadeInDuration(), 0.1);
+    EXPECT_EQ(sorted[0]->GetFadeOutDuration(), 0.0);
+    EXPECT_EQ(sorted[1]->GetFadeInDuration(), 0.0);
+    EXPECT_DOUBLE_EQ(sorted[1]->GetFadeOutDuration(), 0.2);
 }
 
 TEST_F(Au3RecordTests, CompSelectionIsOneUndoStepAndSavedWithTheProject)
@@ -862,6 +1019,7 @@ TEST_F(Au3RecordTests, AutoCompAppliesChoicesAsOneUndoStep)
     put(*take2, *t2src);
     ON_CALL(*m_recordConfiguration, autoCompSegmentLength()).WillByDefault(Return(1.5));
     ON_CALL(*m_recordConfiguration, autoCompPitchScoring()).WillByDefault(Return(true));
+    ON_CALL(*m_recordConfiguration, crossfadeDuration()).WillByDefault(Return(10.0));
     EXPECT_TRUE(m_record->canSwitchTake(main->GetId(), TakeSwitch::AutoComp));
 
     auto& history = ::ProjectHistory::Get(projectRef());
@@ -872,9 +1030,25 @@ TEST_F(Au3RecordTests, AutoCompAppliesChoicesAsOneUndoStep)
     });
     const auto mainId = main->GetId();
     const float noisyAt1 = sampleAt(*main, 1.0);
+    const size_t len = size_t(4.4 * TEST_SAMPLE_RATE);
+    const auto lanesBefore = raw(*main, 0, len), take1Before = raw(*take1, 0, len), take2Before = raw(*take2, 0, len);
 
     //! [WHEN] Auto-comp
     ASSERT_TRUE(m_record->switchTake(mainId, TakeSwitch::AutoComp));
+
+    //! [THEN] No sample was rewritten: every stored sample of every lane is one of the originals at that time
+    {
+        const auto m = raw(*main, 0, len), a = raw(*take1, 0, len), b = raw(*take2, 0, len);
+        for (size_t i = 0; i < len; i += 7) {
+            const std::set<float> orig { lanesBefore[i], take1Before[i], take2Before[i] };
+            EXPECT_TRUE(orig.count(m[i]) && orig.count(a[i]) && orig.count(b[i])) << i;
+        }
+        int faded = 0;
+        for (const auto& clip : main->Intervals()) {
+            faded += clip->GetFadeInDuration() > 0 ? 1 : 0;
+        }
+        EXPECT_GT(faded, 0); // crossfades live on the clips instead
+    }
 
     //! [THEN] Phrase 1 comes from take 1, phrase 2 from take 2, clips named after them
     EXPECT_FLOAT_EQ(sampleAt(*main, 1.0), sampleAt(*t1src, 1.0));
@@ -933,6 +1107,40 @@ TEST_F(Au3RecordTests, DISABLED_MakeAutoCompDemoProject)
     m_au3ProjectAccessor->clearSavedState();
     m_au3ProjectAccessor->close();
     ASSERT_TRUE(testtools::copyFile(m_workingProjectPath, "/workspace/autocomp_demo.aup4"));
+    m_au3ProjectAccessor.reset();
+}
+
+//! Not a test: writes /workspace/fade_demo.aup4 (a comped track with crossfades and a faded clip) for screenshots
+TEST_F(Au3RecordTests, DISABLED_MakeFadeDemoProject)
+{
+    auto makeTrack = [this](const std::vector<float>& x) {
+        auto* t = addSelectedMonoTrack();
+        t->Append(0, reinterpret_cast<constSamplePtr>(x.data()), floatSample, x.size());
+        t->Flush();
+        return t;
+    };
+    Au3WaveTrack* main = makeTrack(tone(6.0, 220.0, 0.0, 0, 0.6f, TEST_SAMPLE_RATE));
+    main->SetName("Lead Vocal");
+    auto* src = makeTrack(tone(6.0, 330.0, 0.0, 2, 0.3f, TEST_SAMPLE_RATE));
+    auto snapshot = takelanes::snapshotFrom(*main, 0.0);
+    Au3WaveTrack* take1 = takelanes::preserveAsTake(projectRef(), *main, *snapshot, 0.0, 6.0);
+    auto audio = std::static_pointer_cast<Au3WaveTrack>(src->Copy(0.0, 6.0, false));
+    take1->ClearAndPaste(0.0, 6.0, *audio);
+    takelanes::renameTakes(projectRef(), *main);
+    TakeLaneInfo::Get(*main).lanesExpanded = true;
+    ASSERT_TRUE(takelanes::compRange(projectRef(), *main, *take1, 2.0, 4.0, 0.3));
+    Au3WaveTrack* pad = makeTrack(tone(5.0, 165.0, 0.0, 0, 0.5f, TEST_SAMPLE_RATE));
+    pad->SetName("Pad");
+    auto clip = *pad->Intervals().begin();
+    clip->SetFadeInDuration(0.8);
+    clip->SetFadeOutDuration(1.5);
+    clip->SetFadeCurve(1);
+    Au3TrackList::Get(projectRef()).Remove(*src);
+    auto lastSaved = TrackList::Create(nullptr);
+    ASSERT_TRUE(ProjectFileIO::Get(projectRef()).SaveProject(wxString(m_workingProjectPath), lastSaved.get()));
+    m_au3ProjectAccessor->clearSavedState();
+    m_au3ProjectAccessor->close();
+    ASSERT_TRUE(testtools::copyFile(m_workingProjectPath, "/workspace/fade_demo.aup4"));
     m_au3ProjectAccessor.reset();
 }
 

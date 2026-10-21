@@ -3394,6 +3394,9 @@ auto WaveTrack::SplitAt(double t) -> std::pair<IntervalHolder, IntervalHolder>
             auto newClip = CopyClip(*c, true);
             c->TrimRightTo(t);// put t on a sample
             newClip->TrimLeftTo(t);
+            // Fades belong to the outer edges
+            c->SetFadeOutDuration(0.0);
+            newClip->SetFadeInDuration(0.0);
             auto result = std::pair{ c, newClip };
 
             // This could invalidate the iterators for the loop!  But we return

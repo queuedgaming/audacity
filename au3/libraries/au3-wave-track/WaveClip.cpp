@@ -263,6 +263,9 @@ WaveClip::WaveClip(
     mTrimRight = orig.mTrimRight;
     mRate = orig.mRate;
     mStretchToMatchProjectTempo = orig.mStretchToMatchProjectTempo;
+    mFadeIn = orig.mFadeIn;
+    mFadeOut = orig.mFadeOut;
+    mFadeCurve = orig.mFadeCurve;
 
     // Deep copy of attachments
     Attachments& attachments = *this;
@@ -303,6 +306,11 @@ WaveClip::WaveClip(
     assert(orig.CountSamples(t0, t1) > 0);
 
     mId = orig.mId;
+    // A partial copy keeps a fade only on the edges it shares with the original
+    mFadeCurve = orig.mFadeCurve;
+    mFadeIn = t0 <= orig.GetPlayStartTime() ? orig.mFadeIn : 0.0;
+    mFadeOut = t1 >= orig.GetPlayEndTime() ? orig.mFadeOut : 0.0;
+
     mSequenceOffset = orig.mSequenceOffset;
 
     //Adjust trim values to sample-boundary
@@ -1034,6 +1042,9 @@ static constexpr auto Name_attr = "name";
 static constexpr auto GroupId_attr = "groupId";
 static constexpr auto ColorIndex_attr = "colorindex";
 static constexpr auto Selected_attr = "isSelected";
+static constexpr auto FadeIn_attr = "fadeIn";
+static constexpr auto FadeOut_attr = "fadeOut";
+static constexpr auto FadeCurve_attr = "fadeCurve";
 
 bool WaveClip::HandleXMLTag(const std::string_view& tag, const AttributesList& attrs)
 {
@@ -1064,6 +1075,18 @@ bool WaveClip::HandleXMLTag(const std::string_view& tag, const AttributesList& a
                     return false;
                 }
                 SetTrimRight(dblValue);
+            } else if (attr == FadeIn_attr) {
+                if (value.TryGet(dblValue)) {
+                    SetFadeInDuration(dblValue);
+                }
+            } else if (attr == FadeOut_attr) {
+                if (value.TryGet(dblValue)) {
+                    SetFadeOutDuration(dblValue);
+                }
+            } else if (attr == FadeCurve_attr) {
+                if (value.TryGet(longValue)) {
+                    SetFadeCurve(int(longValue));
+                }
             } else if (attr == CentShiftAttr) {
                 if (!value.TryGet(dblValue)) {
                     return false;
@@ -1200,6 +1223,16 @@ void WaveClip::WriteXML(size_t ii, XMLWriter& xmlFile) const
     xmlFile.WriteAttr(GroupId_attr, static_cast<long>(mGroupId));
     xmlFile.WriteAttr(ColorIndex_attr, mColorIndex);
     xmlFile.WriteAttr(Selected_attr, mSelected);
+    // Only when used, so projects without fades are written exactly as before
+    if (mFadeIn > 0.0) {
+        xmlFile.WriteAttr(FadeIn_attr, mFadeIn, 8);
+    }
+    if (mFadeOut > 0.0) {
+        xmlFile.WriteAttr(FadeOut_attr, mFadeOut, 8);
+    }
+    if (mFadeCurve != 0) {
+        xmlFile.WriteAttr(FadeCurve_attr, static_cast<long>(mFadeCurve));
+    }
 
     Attachments::ForEach([&](const WaveClipListener& listener){
         listener.WriteXMLAttributes(xmlFile);
@@ -1998,4 +2031,15 @@ WaveClip::Transaction::~Transaction()
         clip.mTrimLeft = mTrimLeft;
         clip.mTrimRight = mTrimRight;
     }
+}
+
+sampleCount WaveClip::GetLeftHandleSampleCount() const
+{
+    return TimeToSamples(mTrimLeft);
+}
+
+sampleCount WaveClip::GetRightHandleSampleCount() const
+{
+    const auto r = GetNumSamples() - TimeToSamples(mTrimLeft) - GetVisibleSampleCount();
+    return r > 0 ? r : sampleCount { 0 };
 }

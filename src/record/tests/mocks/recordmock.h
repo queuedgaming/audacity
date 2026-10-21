@@ -33,5 +33,6 @@ public:
     MOCK_METHOD(muse::async::Notification, projectKeyChanged, (), (const, override));
     MOCK_METHOD(std::string, projectKeyLabel, (const std::optional<ProjectKeyInfo>&), (const, override));
     MOCK_METHOD(std::string, lastAutoCompKey, (), (const, override));
+    MOCK_METHOD(muse::Ret, setClipFades, (const trackedit::ClipKey&, double, double, int), (override));
 };
 }

@@ -1165,6 +1165,36 @@ muse::Ret Au3Record::setProjectKey(const std::optional<ProjectKeyInfo>& key)
     return make_ok();
 }
 
+muse::Ret Au3Record::setClipFades(const trackedit::ClipKey& key, double fadeIn, double fadeOut, int curve)
+{
+    Au3Project& project = projectRef();
+    Au3WaveTrack* track = DomAccessor::findWaveTrack(project, ::TrackId(key.trackId));
+    if (!track) {
+        return make_ret(Ret::Code::InternalError);
+    }
+    auto clip = DomAccessor::findWaveClip(track, key.itemId);
+    if (!clip || fadeIn < 0 || fadeOut < 0) {
+        return make_ret(Ret::Code::InternalError);
+    }
+    // Fades never overlap each other within a clip
+    const double len = clip->GetPlayDuration();
+    fadeIn = std::min(fadeIn, len);
+    fadeOut = std::min(fadeOut, len - fadeIn);
+    if (clip->GetFadeInDuration() == fadeIn && clip->GetFadeOutDuration() == fadeOut && clip->GetFadeCurve() == curve) {
+        return make_ok();
+    }
+    clip->SetFadeInDuration(fadeIn);
+    clip->SetFadeOutDuration(fadeOut);
+    clip->SetFadeCurve(curve);
+    if (trackedit::ITrackeditProjectPtr prj = globalContext()->currentTrackeditProject()) {
+        prj->notifyAboutClipChanged(DomConverter::clip(track, clip.get()));
+    }
+    projectHistory()->pushHistoryState(trc("record", "Changed clip fades"),
+                                       /*: Undo history entry name; shown after Undo and Redo in the Edit menu */
+                                       trc("record", "Clip fades"));
+    return make_ok();
+}
+
 muse::async::Notification Au3Record::projectKeyChanged() const
 {
     return ProjectKey::Get(projectRef()).keyChanged();

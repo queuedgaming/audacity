@@ -10,6 +10,7 @@
 **********************************************************************/
 
 #include "AudioSegmentFactory.h"
+#include <cmath>
 #include "ClipInterface.h"
 #include "ClipSegment.h"
 #include "SilenceSegment.h"
@@ -47,7 +48,20 @@ AudioSegmentFactory::CreateAudioSegmentSequenceForward(double t0)
         return a->GetPlayStartTime() < b->GetPlayStartTime();
     });
     std::vector<std::shared_ptr<AudioSegment> > segments;
-    for (const auto& clip : sortedClips) {
+    // Abutting neighbours lend their hidden audio (handles) to fades, making them crossfades
+    const auto abuts = [this](double a, double b) { return std::abs(a - b) < 0.5 / mSampleRate; };
+    for (size_t i = 0; i < sortedClips.size(); ++i) {
+        const auto& clip = sortedClips[i];
+        const ClipInterface* inPartner = nullptr;
+        const ClipInterface* outPartner = nullptr;
+        if (i > 0 && clip->GetFadeInDuration() > 0
+            && abuts(sortedClips[i - 1]->GetPlayEndTime(), clip->GetPlayStartTime())) {
+            inPartner = sortedClips[i - 1].get();
+        }
+        if (i + 1 < sortedClips.size() && clip->GetFadeOutDuration() > 0
+            && abuts(sortedClips[i + 1]->GetPlayStartTime(), clip->GetPlayEndTime())) {
+            outPartner = sortedClips[i + 1].get();
+        }
         if (clip->GetPlayStartTime() > t0) {
             const auto numSamples
                 =sampleCount { (clip->GetPlayStartTime() - t0) * mSampleRate + .5 };
@@ -58,7 +72,7 @@ AudioSegmentFactory::CreateAudioSegmentSequenceForward(double t0)
             continue;
         }
         segments.push_back(std::make_shared<ClipSegment>(
-                               *clip, t0 - clip->GetPlayStartTime(), PlaybackDirection::forward));
+                               *clip, t0 - clip->GetPlayStartTime(), PlaybackDirection::forward, inPartner, outPartner));
         t0 = clip->GetPlayEndTime();
     }
     return segments;

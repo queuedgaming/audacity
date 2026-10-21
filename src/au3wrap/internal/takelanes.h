@@ -94,8 +94,11 @@ bool activateTake(AudacityProject& project, WaveTrack& mainTrack, WaveTrack& tak
 //! Range comping: make [t0, t1] of `take` active on `mainTrack`. The two lanes exchange
 //! their audio in that range, so the replaced main audio is kept (untouched) in the take and
 //! comping the same range again restores the main track. The comped region becomes its own
-//! clip on the main track, named after the take ("Take N"), and gets linear crossfades of
-//! `crossfade` seconds (at most half the range) with the replaced main audio at both boundaries.
+//! clip on the main track, named after the take ("Take N"). Nothing is rewritten: whole clips move
+//! between the lanes (so both keep bit-exact samples) and the clips starting at both boundaries get
+//! a non-destructive linear fade-in of `crossfade` seconds (at most half the range) that crossfades
+//! with the hidden handle of the clip before it. Seamless boundaries get no fade, so comping a range
+//! back renders exactly the original audio.
 //! Returns false if `take` is not a take of `mainTrack` or the range is empty.
 bool compRange(AudacityProject& project, WaveTrack& mainTrack, WaveTrack& take, double t0, double t1,
                double crossfade);

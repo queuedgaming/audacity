@@ -3,6 +3,8 @@
 */
 #include "clipcontextmenumodel.h"
 
+#include <cmath>
+
 #include "framework/global/translation.h"
 #include "framework/global/realfn.h"
 #include "framework/ui/view/iconcodes.h"
@@ -91,6 +93,8 @@ void ClipContextMenuModel::load()
         makeItemWithArg("clip-pitch-speed-open"),
         resetPitchSpeedItem,
         renderPitchSpeedItem,
+        makeSeparator(),
+        makeFadesMenu(),
     };
 
     const auto project = globalContext()->currentProject();
@@ -260,4 +264,105 @@ MenuItemList ClipContextMenuModel::makeClipColourItems()
     }
 
     return items;
+}
+
+namespace {
+const QString FADE_IN_PREFIX = QStringLiteral("clip-fade-in:");
+const QString FADE_OUT_PREFIX = QStringLiteral("clip-fade-out:");
+const QString FADE_CURVE_ID = QStringLiteral("clip-fade-equal-power");
+const std::vector<int> FADE_LENGTHS_MS { 0, 10, 50, 100, 200, 500, 1000 };
+
+muse::TranslatableString fadeLengthTitle(int ms)
+{
+    if (ms == 0) {
+        return muse::TranslatableString("clip", "None");
+    }
+    if (ms >= 1000) {
+        return muse::TranslatableString("clip", "%1 s").arg(ms / 1000);
+    }
+    return muse::TranslatableString("clip", "%1 ms").arg(ms);
+}
+}
+
+MenuItem* ClipContextMenuModel::makeFadesMenu()
+{
+    trackedit::Clip clip;
+    if (auto prj = globalContext()->currentTrackeditProject()) {
+        clip = prj->clip(m_clipKey.key);
+    }
+    const bool valid = clip.isValid();
+    const auto lengthItems = [&](const QString& prefix, double current) {
+        MenuItemList list;
+        const int currentMs = static_cast<int>(std::lround(current * 1000.0));
+        bool matched = false;
+        for (int ms : FADE_LENGTHS_MS) {
+            auto* item = new MenuItem(this);
+            item->setId(prefix + QString::number(ms));
+            item->setTitle(fadeLengthTitle(ms));
+            muse::ui::UiActionState state;
+            state.enabled = valid;
+            state.checked = currentMs == ms;
+            item->setState(state);
+            item->setCheckable(true);
+            matched = matched || currentMs == ms;
+            list << item;
+        }
+        if (!matched) {
+            // A length set by comping or another value: show it, checked
+            auto* item = new MenuItem(this);
+            item->setId(prefix + QString::number(currentMs));
+            item->setTitle(fadeLengthTitle(currentMs));
+            muse::ui::UiActionState state;
+            state.enabled = valid;
+            state.checked = true;
+            item->setState(state);
+            item->setCheckable(true);
+            list << item;
+        }
+        return list;
+    };
+    auto* curve = new MenuItem(this);
+    curve->setId(FADE_CURVE_ID);
+    curve->setTitle(muse::TranslatableString("clip", "Equal-power curve"));
+    muse::ui::UiActionState curveState;
+    curveState.enabled = valid && (clip.fadeIn > 0 || clip.fadeOut > 0);
+    curveState.checked = clip.fadeCurve == 1;
+    curve->setState(curveState);
+    curve->setCheckable(true);
+
+    MenuItemList items {
+        makeMenu(muse::TranslatableString("clip", "Fade in"), lengthItems(FADE_IN_PREFIX, clip.fadeIn), "menu-fade-in", valid),
+        makeMenu(muse::TranslatableString("clip", "Fade out"), lengthItems(FADE_OUT_PREFIX, clip.fadeOut), "menu-fade-out", valid),
+        curve,
+    };
+    return makeMenu(muse::TranslatableString("clip", "Fades"), items, "menu-fades", valid);
+}
+
+void ClipContextMenuModel::handleMenuItem(const QString& itemId)
+{
+    const bool in = itemId.startsWith(FADE_IN_PREFIX);
+    const bool out = itemId.startsWith(FADE_OUT_PREFIX);
+    if (!in && !out && itemId != FADE_CURVE_ID) {
+        AbstractMenuModel::handleMenuItem(itemId);
+        return;
+    }
+    auto prj = globalContext()->currentTrackeditProject();
+    if (!prj) {
+        return;
+    }
+    const trackedit::Clip clip = prj->clip(m_clipKey.key);
+    if (!clip.isValid()) {
+        return;
+    }
+    double fadeIn = clip.fadeIn;
+    double fadeOut = clip.fadeOut;
+    int curve = clip.fadeCurve;
+    if (in) {
+        fadeIn = itemId.mid(FADE_IN_PREFIX.size()).toInt() / 1000.0;
+    } else if (out) {
+        fadeOut = itemId.mid(FADE_OUT_PREFIX.size()).toInt() / 1000.0;
+    } else {
+        curve = curve == 1 ? 0 : 1;
+    }
+    record()->setClipFades(m_clipKey.key, fadeIn, fadeOut, curve);
 }

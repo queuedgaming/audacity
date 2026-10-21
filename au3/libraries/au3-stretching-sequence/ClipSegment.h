@@ -30,7 +30,8 @@ using PitchRatioChangeCbSubscriber
 class STRETCHING_SEQUENCE_API ClipSegment final : public AudioSegment
 {
 public:
-    ClipSegment(const ClipInterface&, double durationToDiscard, PlaybackDirection);
+    ClipSegment(const ClipInterface&, double durationToDiscard, PlaybackDirection,
+                const ClipInterface* fadeInPartner = nullptr, const ClipInterface* fadeOutPartner = nullptr);
     ~ClipSegment() override;
 
     // AudioSegment
@@ -39,6 +40,17 @@ public:
     size_t NChannels() const override;
 
 private:
+    void ApplyFades(float* const* buffers, size_t numSamples);
+
+    const ClipInterface& mClip;
+    const PlaybackDirection mDirection;
+    const ClipInterface* mFadeInPartner;
+    const ClipInterface* mFadeOutPartner;
+    long long mDiscard = 0;
+    long long mLength = 0;
+    long long mFadeInSamples = 0;
+    long long mFadeOutSamples = 0;
+    int mFadeCurve = 0;
     const sampleCount mTotalNumSamplesToProduce;
     sampleCount mTotalNumSamplesProduced = 0;
     ClipTimeAndPitchSource mSource;

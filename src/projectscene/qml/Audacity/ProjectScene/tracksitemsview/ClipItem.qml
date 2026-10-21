@@ -23,6 +23,10 @@ Rectangle {
     required property bool isSpectrogramViewVisible
     property int pitch: 0
     property bool isPitchModified: false
+    //! Non-destructive fades (seconds) drawn over the waveform
+    property real fadeIn: 0
+    property real fadeOut: 0
+    property int fadeCurve: 0
     property int speedPercentage: 0
     property bool isSpeedModified: false
     property bool showChannelSplitter: false
@@ -869,6 +873,70 @@ Rectangle {
                         Qt.callLater(menuBtn.clicked, mouse)
                     }
                 }
+            }
+        }
+
+        Canvas {
+            id: fadeOverlay
+
+            //! Shades the part of the clip a fade attenuates and draws its gain curve
+            anchors.fill: viewsColumn
+            z: viewsColumn.z + 1
+            visible: !root.collapsed && (root.fadeIn > 0 || root.fadeOut > 0)
+            enabled: false
+
+            readonly property real pxPerSec: root.context ? root.context.zoom : 0
+            readonly property real inWidth: Math.min(width, root.fadeIn * pxPerSec)
+            readonly property real outWidth: Math.min(width, root.fadeOut * pxPerSec)
+
+            onInWidthChanged: requestPaint()
+            onOutWidthChanged: requestPaint()
+            onWidthChanged: requestPaint()
+            onHeightChanged: requestPaint()
+            onVisibleChanged: requestPaint()
+            Connections {
+                target: root
+                function onFadeCurveChanged() { fadeOverlay.requestPaint() }
+            }
+
+            function gain(x) {
+                return root.fadeCurve === 1 ? Math.sin(x * Math.PI / 2) : x
+            }
+
+            function drawFade(ctx, x0, w, rising) {
+                if (w < 1) {
+                    return
+                }
+                const steps = Math.max(2, Math.ceil(w / 2))
+                ctx.beginPath()
+                ctx.moveTo(x0, 0)
+                for (let i = 0; i <= steps; ++i) {
+                    const f = i / steps
+                    const g = gain(rising ? f : 1 - f)
+                    ctx.lineTo(x0 + f * w, height * (1 - g))
+                }
+                ctx.lineTo(x0 + w, 0)
+                ctx.closePath()
+                ctx.fillStyle = Qt.rgba(0, 0, 0, 0.28)
+                ctx.fill()
+
+                ctx.beginPath()
+                for (let i = 0; i <= steps; ++i) {
+                    const f = i / steps
+                    const g = gain(rising ? f : 1 - f)
+                    const px = x0 + f * w, py = height * (1 - g)
+                    if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py)
+                }
+                ctx.lineWidth = 1.5
+                ctx.strokeStyle = "#ffffff"
+                ctx.stroke()
+            }
+
+            onPaint: {
+                const ctx = getContext("2d")
+                ctx.reset()
+                drawFade(ctx, 0, inWidth, true)
+                drawFade(ctx, width - outWidth, outWidth, false)
             }
         }
 

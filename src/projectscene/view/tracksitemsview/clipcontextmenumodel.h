@@ -7,6 +7,7 @@
 #include "uicomponents/qml/Muse/UiComponents/abstractmenumodel.h"
 
 #include "iprojectsceneconfiguration.h"
+#include "record/irecord.h"
 #include "types/projectscenetypes.h"
 
 namespace au::projectscene {
@@ -16,6 +17,7 @@ class ClipContextMenuModel : public muse::uicomponents::AbstractMenuModel
 
     muse::GlobalInject<projectscene::IProjectSceneConfiguration> projectSceneConfiguration;
     muse::ContextInject<context::IGlobalContext> globalContext{ this };
+    muse::ContextInject<record::IRecord> record{ this };
 
     Q_PROPERTY(ClipKey clipKey READ clipKey WRITE setClipKey NOTIFY clipKeyChanged FINAL)
 
@@ -23,6 +25,7 @@ public:
     ClipContextMenuModel() = default;
 
     Q_INVOKABLE void load() override;
+    Q_INVOKABLE void handleMenuItem(const QString& itemId) override;
 
     ClipKey clipKey() const;
     void setClipKey(const ClipKey& newClipKey);
@@ -37,6 +40,7 @@ private:
     void updatePitchSpeedModifiedEnabledState(muse::uicomponents::MenuItem& item);
 
     muse::uicomponents::MenuItemList makeClipColourItems();
+    muse::uicomponents::MenuItem* makeFadesMenu();
     void updateColorCheckedState();
     void updateColorMenu();
 

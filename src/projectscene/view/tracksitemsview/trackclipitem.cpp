@@ -20,6 +20,12 @@ void TrackClipItem::setClip(const trackedit::Clip& clip)
     m_selectedColor = configuration()->clipSelectedColor(clip.colorIndex).toQColor();
     m_groupId = clip.groupId;
     m_pitch = clip.pitch;
+    if (m_fadeIn != clip.fadeIn || m_fadeOut != clip.fadeOut || m_fadeCurve != clip.fadeCurve) {
+        m_fadeIn = clip.fadeIn;
+        m_fadeOut = clip.fadeOut;
+        m_fadeCurve = clip.fadeCurve;
+        emit fadesChanged();
+    }
     m_speed = clip.speed;
 
     emit titleChanged();
