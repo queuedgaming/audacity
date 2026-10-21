@@ -53,6 +53,11 @@ public:
     virtual void setKeepTakesWhenRecordingOver(bool enabled) = 0;
     virtual muse::async::Notification keepTakesWhenRecordingOverChanged() const = 0;
 
+    //! Auto-comp: shortest segment, in seconds
+    virtual double autoCompSegmentLength() const = 0;
+    virtual void setAutoCompSegmentLength(double seconds) = 0;
+    virtual muse::async::Notification autoCompSegmentLengthChanged() const = 0;
+
     virtual RecordingTrackNameOptions recordingTrackNameOptions() const = 0;
 };
 }

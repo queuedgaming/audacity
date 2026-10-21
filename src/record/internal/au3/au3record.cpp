@@ -1059,6 +1059,10 @@ muse::Ret Au3Record::switchTake(trackedit::TrackId trackId, TakeSwitch kind)
                          selectionController()->dataSelectedEndTime(),
                          std::max(0.0, recordConfiguration()->crossfadeDuration() / 1000.0));
         break;
+    case TakeSwitch::AutoComp:
+        done = !autoComp(project, *main, recordConfiguration()->autoCompSegmentLength(),
+                         std::max(0.0, recordConfiguration()->crossfadeDuration() / 1000.0)).empty();
+        break;
     case TakeSwitch::Next:
     case TakeSwitch::Previous:
         done = cycleTakes(project, *main, kind == TakeSwitch::Next);
@@ -1075,7 +1079,11 @@ muse::Ret Au3Record::switchTake(trackedit::TrackId trackId, TakeSwitch kind)
         }
     }
 
-    if (kind == TakeSwitch::CompSelection) {
+    if (kind == TakeSwitch::AutoComp) {
+        projectHistory()->pushHistoryState(trc("record", "Auto-comped takes"),
+                                           /*: Undo history entry name; shown after Undo and Redo in the Edit menu */
+                                           trc("record", "Auto-comp takes"));
+    } else if (kind == TakeSwitch::CompSelection) {
         projectHistory()->pushHistoryState(trc("record", "Comped selection from take"),
                                            /*: Undo history entry name; shown after Undo and Redo in the Edit menu */
                                            trc("record", "Comp take"));

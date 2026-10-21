@@ -2,6 +2,7 @@
 * Audacity: A Digital Audio Editor
 */
 #include "takelanes.h"
+#include "autocomp.h"
 
 #include <algorithm>
 #include <map>
@@ -436,4 +437,62 @@ bool takelanes::compRange(AudacityProject& project, WaveTrack& mainTrack, WaveTr
     blend(mainTrack, take, s0, fade, true);
     blend(mainTrack, take, s1 - fade, fade, false);
     return true;
+}
+
+namespace {
+//! Mono mixdown of `track` over [s0, s0 + len) samples, zeros outside clips
+std::vector<float> monoSamples(const WaveTrack& track, sampleCount s0, size_t len)
+{
+    std::vector<float> out(len, 0.0f), tmp(len);
+    const size_t nCh = track.NChannels();
+    for (size_t c = 0; c < nCh; ++c) {
+        float* p = tmp.data();
+        track.GetFloats(c, 1, &p, s0, len, false, FillFormat::fillZero, false);
+        for (size_t i = 0; i < len; ++i) {
+            out[i] += tmp[i] / float(nCh);
+        }
+    }
+    return out;
+}
+}
+
+std::vector<takelanes::AutoCompChoice> takelanes::autoComp(AudacityProject& project, WaveTrack& mainTrack,
+                                                           double minSegmentSec, double crossfade)
+{
+    auto takes = takesOf(project, mainTrack);
+    takes.erase(std::remove_if(takes.begin(), takes.end(), [](WaveTrack* t) { return t->Intervals().empty(); }),
+                takes.end());
+    if (takes.empty()) {
+        return {};
+    }
+    double s = takes.front()->GetStartTime();
+    double e = takes.front()->GetEndTime();
+    for (auto* t : takes) {
+        s = std::min(s, t->GetStartTime());
+        e = std::max(e, t->GetEndTime());
+    }
+    const auto s0 = mainTrack.TimeToLongSamples(s);
+    const size_t len = (mainTrack.TimeToLongSamples(e) - s0).as_size_t();
+    const double rate = mainTrack.GetRate();
+
+    std::vector<std::vector<float> > lanes { monoSamples(mainTrack, s0, len) };
+    for (auto* t : takes) {
+        lanes.push_back(monoSamples(*t, s0, len));
+    }
+    autocomp::Settings settings;
+    settings.minSegmentSec = std::max(0.1, minSegmentSec);
+    const auto segments = autocomp::compute(lanes, rate, settings);
+
+    std::vector<AutoCompChoice> choices;
+    for (const auto& seg : segments) {
+        AutoCompChoice c;
+        c.t0 = mainTrack.LongSamplesToTime(s0 + sampleCount(seg.start));
+        c.t1 = mainTrack.LongSamplesToTime(s0 + sampleCount(seg.end));
+        c.lane = seg.lane;
+        if (seg.lane > 0) {
+            compRange(project, mainTrack, *takes[seg.lane - 1], c.t0, c.t1, crossfade);
+        }
+        choices.push_back(c);
+    }
+    return choices;
 }

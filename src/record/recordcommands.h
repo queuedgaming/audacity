@@ -19,4 +19,5 @@ inline static const muse::rcommand::Command RECORD_NEXT_TAKE_COMMAND("command://
 inline static const muse::rcommand::Command RECORD_PREVIOUS_TAKE_COMMAND("command://record/previous-take");
 inline static const muse::rcommand::Command RECORD_ACTIVATE_TAKE_COMMAND("command://record/activate-take");
 inline static const muse::rcommand::Command RECORD_COMP_TAKE_SELECTION_COMMAND("command://record/comp-take-selection");
+inline static const muse::rcommand::Command RECORD_AUTO_COMP_COMMAND("command://record/auto-comp-takes");
 }

@@ -18,6 +18,9 @@ RecordingPreferencesModel::RecordingPreferencesModel(QObject* parent)
     recordConfiguration()->punchOutAtSelectionEndChanged().onNotify(this, [this]() {
         emit punchOutAtSelectionEndChanged();
     });
+    recordConfiguration()->autoCompSegmentLengthChanged().onNotify(this, [this]() {
+        emit autoCompSegmentLengthChanged();
+    });
     recordConfiguration()->keepTakesWhenRecordingOverChanged().onNotify(this, [this]() {
         emit keepTakesWhenRecordingOverChanged();
     });
@@ -99,4 +102,17 @@ void RecordingPreferencesModel::setKeepTakesWhenRecordingOver(bool enabled)
         return;
     }
     recordConfiguration()->setKeepTakesWhenRecordingOver(enabled);
+}
+
+double RecordingPreferencesModel::autoCompSegmentLength() const
+{
+    return recordConfiguration()->autoCompSegmentLength();
+}
+
+void RecordingPreferencesModel::setAutoCompSegmentLength(double seconds)
+{
+    if (autoCompSegmentLength() == seconds) {
+        return;
+    }
+    recordConfiguration()->setAutoCompSegmentLength(seconds);
 }

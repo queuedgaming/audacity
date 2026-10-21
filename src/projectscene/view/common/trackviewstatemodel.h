@@ -81,6 +81,8 @@ public:
     Q_INVOKABLE void activateTake();
     //! Range comping: use the selected time range of this take lane on its main track
     Q_INVOKABLE void compSelection();
+    //! Automatic comping of this main track's takes
+    Q_INVOKABLE void autoComp();
 
     bool isPlaying() const;
     bool isRecording() const;

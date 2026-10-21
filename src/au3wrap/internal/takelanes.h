@@ -98,6 +98,18 @@ bool activateTake(AudacityProject& project, WaveTrack& mainTrack, WaveTrack& tak
 bool compRange(AudacityProject& project, WaveTrack& mainTrack, WaveTrack& take, double t0, double t1,
                double crossfade);
 
+//! Automatic comping over the take range of `mainTrack`: segments the range at shared phrase gaps,
+//! scores the main track and every take per segment (see autocomp.h) and comps the best take into
+//! each segment with compRange. Returns the chosen lane per segment (0 = main kept, N = take N's lane
+//! position + 1) with segment times; empty if there are no takes.
+struct AutoCompChoice {
+    double t0 = 0.0;
+    double t1 = 0.0;
+    int lane = 0;
+};
+std::vector<AutoCompChoice> autoComp(AudacityProject& project, WaveTrack& mainTrack, double minSegmentSec,
+                                     double crossfade);
+
 //! Label for comped regions of take number `index` ("Take N")
 wxString compLabel(int index);
 }

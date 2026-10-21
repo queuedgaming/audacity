@@ -36,6 +36,10 @@ public:
     void setKeepTakesWhenRecordingOver(bool enabled) override;
     muse::async::Notification keepTakesWhenRecordingOverChanged() const override;
 
+    double autoCompSegmentLength() const override;
+    void setAutoCompSegmentLength(double seconds) override;
+    muse::async::Notification autoCompSegmentLengthChanged() const override;
+
     bool punchOutAtSelectionEnd() const override;
     void setPunchOutAtSelectionEnd(bool enabled) override;
     muse::async::Notification punchOutAtSelectionEndChanged() const override;
@@ -49,5 +53,6 @@ private:
     muse::async::Notification m_crossfadeDurationChanged;
     muse::async::Notification m_punchOutAtSelectionEndChanged;
     muse::async::Notification m_keepTakesChanged;
+    muse::async::Notification m_autoCompSegmentLengthChanged;
 };
 }

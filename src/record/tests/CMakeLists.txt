@@ -27,6 +27,7 @@ set(MODULE_TEST_LINK
     au3-track
     au3-wave-track
     au3-project-history
+    au3-project-file-io
 
     muse::ui
     )

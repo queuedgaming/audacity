@@ -14,6 +14,7 @@ const muse::Settings::Key INPUT_MONITORING_KEY("record", "record/inputMonitoring
 const muse::Settings::Key LEAD_IN_TIME_DURATION_KEY("record", "record/leadInTimeDuration");
 const muse::Settings::Key CROSSFADE_DURATION_KEY("record", "record/crossfadeDuration");
 const muse::Settings::Key KEEP_TAKES_KEY("record", "record/keepTakesWhenRecordingOver");
+const muse::Settings::Key AUTOCOMP_SEGMENT_KEY("record", "record/autoCompSegmentLength");
 const muse::Settings::Key PUNCH_OUT_AT_SELECTION_END_KEY("record", "record/punchOutAtSelectionEnd");
 
 //! NOTE: these keys deliberately match the au3 preference paths (bridged to the
@@ -48,6 +49,10 @@ void RecordConfiguration::init()
         m_crossfadeDurationChanged.notify();
     });
 
+    muse::settings()->setDefaultValue(AUTOCOMP_SEGMENT_KEY, muse::Val(2.0));
+    muse::settings()->valueChanged(AUTOCOMP_SEGMENT_KEY).onReceive(nullptr, [this](const muse::Val&) {
+        m_autoCompSegmentLengthChanged.notify();
+    });
     muse::settings()->setDefaultValue(KEEP_TAKES_KEY, muse::Val(true));
     muse::settings()->valueChanged(KEEP_TAKES_KEY).onReceive(nullptr, [this](const muse::Val&) {
         m_keepTakesChanged.notify();
@@ -158,4 +163,19 @@ RecordingTrackNameOptions RecordConfiguration::recordingTrackNameOptions() const
     options.addDateStamp = muse::settings()->value(DATE_STAMP_KEY).toBool();
     options.addTimeStamp = muse::settings()->value(TIME_STAMP_KEY).toBool();
     return options;
+}
+
+double RecordConfiguration::autoCompSegmentLength() const
+{
+    return muse::settings()->value(AUTOCOMP_SEGMENT_KEY).toDouble();
+}
+
+void RecordConfiguration::setAutoCompSegmentLength(double seconds)
+{
+    muse::settings()->setSharedValue(AUTOCOMP_SEGMENT_KEY, muse::Val(seconds));
+}
+
+muse::async::Notification RecordConfiguration::autoCompSegmentLengthChanged() const
+{
+    return m_autoCompSegmentLengthChanged;
 }

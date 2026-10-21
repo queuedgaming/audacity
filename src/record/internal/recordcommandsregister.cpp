@@ -132,6 +132,15 @@ const std::vector<CommandInfo> s_commandInfos = {
         InputSchema(),
         Decoration()
     },
+    CommandInfo{
+        RECORD_AUTO_COMP_COMMAND,
+        //: Command title: shown as a menu item or a button label; keep it short
+        TranslatableString("command", "Auto-comp takes"),
+        //: Command description: shown as a tooltip; can be a full sentence
+        TranslatableString("command_description", "Pick the cleanest take for each phrase of the focused track"),
+        InputSchema(),
+        Decoration()
+    },
 };
 }
 

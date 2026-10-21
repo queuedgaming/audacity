@@ -95,4 +95,29 @@ BaseSection {
             recordingPreferencesModel.keepTakesWhenRecordingOver = !checked
         }
     }
+
+    IncrementalPropertyControlWithTitle {
+        title: qsTrc("preferences", "Auto-comp: shortest segment")
+
+        currentValue: recordingPreferencesModel.autoCompSegmentLength
+
+        columnWidth: root.columnWidth
+        controlWidth: 120
+        spacing: root.columnSpacing
+
+        minValue: 0.5
+        maxValue: 30
+        step: 0.5
+        decimals: 1
+
+        measureUnitsSymbol: qsTrc("global", "seconds")
+
+        navigation.name: "AutoCompSegmentLengthControl"
+        navigation.panel: root.navigation
+        navigation.row: 4
+
+        onValueEdited: function (newValue) {
+            recordingPreferencesModel.setAutoCompSegmentLength(newValue)
+        }
+    }
 }

@@ -268,3 +268,11 @@ void TrackViewStateModel::compSelection()
         record()->switchTake(m_trackId, record::TakeSwitch::CompSelection);
     }
 }
+
+void TrackViewStateModel::autoComp()
+{
+    if (m_takeLaneState.role == TakeLaneState::Role::Main
+        && record()->canSwitchTake(m_trackId, record::TakeSwitch::AutoComp)) {
+        record()->switchTake(m_trackId, record::TakeSwitch::AutoComp);
+    }
+}

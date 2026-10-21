@@ -227,6 +227,24 @@ ListItemBlank {
                     opacity: 0.7
                 }
 
+                //! Automatic comping: pick the best take per phrase
+                FlatButton {
+                    id: autoCompButton
+                    objectName: "AutoCompButton"
+                    visible: trackViewState.takeRole === 1
+                    Layout.preferredWidth: 44
+                    Layout.preferredHeight: 20
+                    text: qsTrc("projectscene", "Auto")
+                    toolTipTitle: qsTrc("projectscene", "Auto-comp takes")
+                    toolTipDescription: qsTrc("projectscene", "Pick the cleanest take for each phrase (less clipping, noise and dropouts)")
+                    navigation.panel: root.headerNavigationPanel
+                    navigation.name: "AutoCompButton"
+                    navigation.order: title.navigation.order + 1
+                    navigation.accessible.name: toolTipTitle
+                    navigation.accessible.description: toolTipDescription
+                    onClicked: trackViewState.autoComp()
+                }
+
                 FlatButton {
                     id: takeButton
                     objectName: "ActivateTakeButton"

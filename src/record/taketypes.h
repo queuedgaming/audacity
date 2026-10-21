@@ -10,5 +10,6 @@ enum class TakeSwitch {
     Previous,  //!< inverse rotation
     Activate,  //!< swap the focused take lane with its main track
     CompSelection, //!< make the selected time range of the focused take lane active on its main track
+    AutoComp,  //!< pick the best take per segment automatically (see au3wrap/internal/autocomp.h)
 };
 }

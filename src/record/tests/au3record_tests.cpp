@@ -4,12 +4,15 @@
 #include "au3-project-history/ProjectHistory.h"
 #include "au3-project-history/UndoManager.h"
 #include <cfloat>
+#include <cmath>
+#include <set>
 
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
 
 #include "../internal/au3/au3record.h"
 #include "au3wrap/internal/takelanes.h"
+#include "au3wrap/internal/autocomp.h"
 
 #include "au3-xml/XMLWriter.h"
 
@@ -31,6 +34,7 @@
 #include "au3wrap/au3types.h"
 
 #include "au3-track/PendingTracks.h"
+#include "au3-project-file-io/ProjectFileIO.h"
 #include "au3-wave-track/WaveTrack.h"
 
 using ::testing::_;
@@ -660,5 +664,234 @@ TEST_F(Au3RecordTests, CompSelectionIsOneUndoStepAndSavedWithTheProject)
     EXPECT_FLOAT_EQ(sampleAt(*mainAfter, 3.5), 1.0f);
     EXPECT_FLOAT_EQ(sampleAt(*takeAfter, 3.5), 2.0f);
     EXPECT_FALSE(history.UndoAvailable());
+}
+
+namespace {
+constexpr double AC_RATE = 8000.0;
+
+//! 220 Hz "phrase" of `seconds`; kind 0 clean, 1 clipped (overdriven), 2 noisy, 3 very quiet, 4 dropout in the middle
+std::vector<float> phrase(double seconds, int kind, unsigned seed = 1)
+{
+    std::vector<float> x(size_t(seconds * AC_RATE));
+    unsigned state = seed * 2654435761u + 12345u;
+    auto noise = [&state]() {
+        state = state * 1664525u + 1013904223u;
+        return float((state >> 8) & 0xFFFF) / 32768.0f - 1.0f;
+    };
+    for (size_t i = 0; i < x.size(); ++i) {
+        float v = 0.4f * float(std::sin(2.0 * M_PI * 220.0 * double(i) / AC_RATE));
+        switch (kind) {
+        case 1: v = std::clamp(v * 4.0f, -1.0f, 1.0f);
+            break;
+        case 2: v += 0.15f * noise();
+            break;
+        case 3: v *= 0.003f;
+            break;
+        case 4: if (i > x.size() / 3 && i < 2 * x.size() / 3) {
+                v = 0.0f;
+        }
+            break;
+        default: v += 0.001f * noise();
+        }
+        x[i] = v;
+    }
+    return x;
+}
+
+std::vector<float> concat(std::initializer_list<std::vector<float> > parts)
+{
+    std::vector<float> out;
+    for (const auto& p : parts) {
+        out.insert(out.end(), p.begin(), p.end());
+    }
+    return out;
+}
+
+std::vector<float> gap(double seconds) { return std::vector<float>(size_t(seconds * AC_RATE), 0.0f); }
+}
+
+TEST(AutoCompTests, ScoresPenaliseClippingNoiseLowLevelAndDropouts)
+{
+    using namespace au::au3::autocomp;
+    const Settings s;
+    const auto clean = analyse(phrase(2.0, 0), 0, 16000, AC_RATE, s);
+    const auto clipped = analyse(phrase(2.0, 1), 0, 16000, AC_RATE, s);
+    const auto noisy = analyse(phrase(2.0, 2), 0, 16000, AC_RATE, s);
+    const auto quiet = analyse(phrase(2.0, 3), 0, 16000, AC_RATE, s);
+    const auto dropout = analyse(phrase(2.0, 4), 0, 16000, AC_RATE, s);
+
+    EXPECT_NEAR(clean.clipFraction, 0.0, 1e-9);
+    EXPECT_GT(clipped.clipFraction, 0.3);
+    EXPECT_GT(noisy.noisiness, clean.noisiness + 0.15);
+    EXPECT_GT(dropout.dropoutFraction, 0.25);
+    EXPECT_LT(quiet.loudDb, s.lowLevelDb);
+
+    EXPECT_GT(clean.score, clipped.score);
+    EXPECT_GT(clean.score, noisy.score);
+    EXPECT_GT(clean.score, quiet.score);
+    EXPECT_GT(clean.score, dropout.score);
+}
+
+TEST(AutoCompTests, BoundariesSitInSharedPhraseGaps)
+{
+    using namespace au::au3::autocomp;
+    Settings s;
+    s.minSegmentSec = 1.5;
+    // Phrases of 2 s separated by 0.3 s gaps at [2.0, 2.3] and [4.3, 4.6]
+    const auto a = concat({ phrase(2.0, 0), gap(0.3), phrase(2.0, 0), gap(0.3), phrase(2.0, 0) });
+    const auto b = concat({ phrase(2.0, 2), gap(0.3), phrase(2.0, 1), gap(0.3), phrase(2.0, 2) });
+    const auto bounds = findBoundaries({ a, b }, AC_RATE, s);
+    ASSERT_EQ(bounds.size(), 2u);
+    EXPECT_GE(bounds[0] / AC_RATE, 2.0);
+    EXPECT_LE(bounds[0] / AC_RATE, 2.3);
+    EXPECT_GE(bounds[1] / AC_RATE, 4.3);
+    EXPECT_LE(bounds[1] / AC_RATE, 4.6);
+
+    //! No segment shorter than the minimum, even without gaps
+    const auto flat = phrase(5.0, 0);
+    const auto b2 = findBoundaries({ flat }, AC_RATE, s);
+    size_t prev = 0;
+    for (size_t x : b2) {
+        EXPECT_GE(x - prev, size_t(1.5 * AC_RATE));
+        prev = x;
+    }
+    EXPECT_GE(flat.size() - prev, size_t(1.5 * AC_RATE));
+}
+
+TEST(AutoCompTests, PicksTheCleanTakePerSegment)
+{
+    using namespace au::au3::autocomp;
+    Settings s;
+    s.minSegmentSec = 1.5;
+    // Three phrases; the clean one is in a different lane each time
+    const auto lane0 = concat({ phrase(2.0, 1), gap(0.3), phrase(2.0, 0, 2), gap(0.3), phrase(2.0, 2, 3) });
+    const auto lane1 = concat({ phrase(2.0, 2, 4), gap(0.3), phrase(2.0, 1), gap(0.3), phrase(2.0, 0, 5) });
+    const auto lane2 = concat({ phrase(2.0, 0, 6), gap(0.3), phrase(2.0, 2, 7), gap(0.3), phrase(2.0, 1) });
+    const auto segs = compute({ lane0, lane1, lane2 }, AC_RATE, s);
+    ASSERT_EQ(segs.size(), 3u);
+    EXPECT_EQ(segs[0].lane, 2);
+    EXPECT_EQ(segs[1].lane, 0);
+    EXPECT_EQ(segs[2].lane, 1);
+    EXPECT_EQ(segs.front().start, 0u);
+    EXPECT_EQ(segs.back().end, lane0.size());
+}
+
+TEST(AutoCompTests, HysteresisKeepsThePreviousTakeForMarginalGains)
+{
+    using namespace au::au3::autocomp;
+    Settings s;
+    s.minSegmentSec = 1.5;
+    // Two equally clean lanes (different noise seeds): the choice must not flip between segments
+    const auto a = concat({ phrase(2.0, 0, 1), gap(0.3), phrase(2.0, 0, 2), gap(0.3), phrase(2.0, 0, 3) });
+    const auto b = concat({ phrase(2.0, 0, 4), gap(0.3), phrase(2.0, 0, 5), gap(0.3), phrase(2.0, 0, 6) });
+    const auto segs = compute({ a, b }, AC_RATE, s);
+    ASSERT_EQ(segs.size(), 3u);
+    EXPECT_EQ(segs[1].lane, segs[0].lane);
+    EXPECT_EQ(segs[2].lane, segs[0].lane);
+
+    //! With no hysteresis it is free to follow the raw scores
+    s.hysteresis = 0.0;
+    const auto raw = compute({ a, b }, AC_RATE, s);
+    for (const auto& seg : raw) {
+        EXPECT_GE(seg.metrics[seg.lane].score, seg.metrics[1 - seg.lane].score);
+    }
+}
+
+TEST_F(Au3RecordTests, AutoCompAppliesChoicesAsOneUndoStep)
+{
+    //! [GIVEN] Main: noisy, take 1: clean in phrase 1, take 2: clean in phrase 2 (44.1 kHz project)
+    auto makeTrack = [this](const std::vector<float>& data8k) {
+        // upsample by repetition is fine for the heuristics; keep it simple: write at project rate
+        std::vector<float> x(size_t(data8k.size() * TEST_SAMPLE_RATE / AC_RATE));
+        for (size_t i = 0; i < x.size(); ++i) {
+            x[i] = data8k[std::min(data8k.size() - 1, size_t(double(i) * AC_RATE / TEST_SAMPLE_RATE))];
+        }
+        auto* t = addSelectedMonoTrack();
+        t->Append(0, reinterpret_cast<constSamplePtr>(x.data()), floatSample, x.size());
+        t->Flush();
+        return t;
+    };
+    Au3WaveTrack* main = makeTrack(concat({ phrase(2.0, 2, 1), gap(0.4), phrase(2.0, 2, 2) }));
+    auto* t1src = makeTrack(concat({ phrase(2.0, 0, 3), gap(0.4), phrase(2.0, 1) }));
+    auto* t2src = makeTrack(concat({ phrase(2.0, 1), gap(0.4), phrase(2.0, 0, 4) }));
+    auto snapshot = takelanes::snapshotFrom(*main, 0.0);
+    Au3WaveTrack* take1 = takelanes::preserveAsTake(projectRef(), *main, *snapshot, 0.0, 4.4);
+    Au3WaveTrack* take2 = takelanes::preserveAsTake(projectRef(), *main, *snapshot, 0.0, 4.4);
+    ASSERT_TRUE(take1 && take2);
+    auto put = [](Au3WaveTrack& lane, Au3WaveTrack& src) {
+        auto audio = std::static_pointer_cast<Au3WaveTrack>(src.Copy(0.0, 4.4, false));
+        lane.ClearAndPaste(0.0, 4.4, *audio);
+    };
+    put(*take1, *t1src);
+    put(*take2, *t2src);
+    ON_CALL(*m_recordConfiguration, autoCompSegmentLength()).WillByDefault(Return(1.5));
+    EXPECT_TRUE(m_record->canSwitchTake(main->GetId(), TakeSwitch::AutoComp));
+
+    auto& history = ::ProjectHistory::Get(projectRef());
+    history.InitialState();
+    EXPECT_CALL(*m_projectHistory, pushHistoryState(_, _)).Times(1).WillOnce([&history](auto, auto) {
+        history.PushState(::TranslatableString::untranslatable(wxString("Auto")),
+                          ::TranslatableString::untranslatable(wxString("Auto")));
+    });
+    const auto mainId = main->GetId();
+    const float noisyAt1 = sampleAt(*main, 1.0);
+
+    //! [WHEN] Auto-comp
+    ASSERT_TRUE(m_record->switchTake(mainId, TakeSwitch::AutoComp));
+
+    //! [THEN] Phrase 1 comes from take 1, phrase 2 from take 2, clips named after them
+    EXPECT_FLOAT_EQ(sampleAt(*main, 1.0), sampleAt(*t1src, 1.0));
+    EXPECT_FLOAT_EQ(sampleAt(*main, 3.4), sampleAt(*t2src, 3.4));
+    std::set<wxString> names;
+    for (const auto& clip : main->Intervals()) {
+        names.insert(clip->GetName());
+    }
+    EXPECT_TRUE(names.count("Take 1"));
+    EXPECT_TRUE(names.count("Take 2"));
+
+    //! [AND] One undo restores the main track
+    UndoManager::Get(projectRef()).Undo([&history](const UndoStackElem& elem) { history.PopState(elem.state); });
+    Au3WaveTrack* restored = DomAccessor::findWaveTrack(projectRef(), mainId);
+    ASSERT_NE(restored, nullptr);
+    EXPECT_FLOAT_EQ(sampleAt(*restored, 1.0), noisyAt1);
+    EXPECT_FALSE(history.UndoAvailable());
+}
+
+//! Not a test: writes /workspace/autocomp_demo.aup4 with visibly different takes for screenshots
+TEST_F(Au3RecordTests, DISABLED_MakeAutoCompDemoProject)
+{
+    auto makeTrack = [this](const std::vector<float>& data8k) {
+        std::vector<float> x(size_t(data8k.size() * TEST_SAMPLE_RATE / AC_RATE));
+        for (size_t i = 0; i < x.size(); ++i) {
+            x[i] = data8k[std::min(data8k.size() - 1, size_t(double(i) * AC_RATE / TEST_SAMPLE_RATE))];
+        }
+        auto* t = addSelectedMonoTrack();
+        t->Append(0, reinterpret_cast<constSamplePtr>(x.data()), floatSample, x.size());
+        t->Flush();
+        return t;
+    };
+    // Main (current take): noisy / clipped / quiet; take 1 and take 2 are clean in different phrases
+    Au3WaveTrack* main = makeTrack(concat({ phrase(2.0, 2, 1), gap(0.5), phrase(2.0, 1), gap(0.5), phrase(2.0, 3) }));
+    main->SetName("Lead Vocal");
+    auto* t1src = makeTrack(concat({ phrase(2.0, 0, 3), gap(0.5), phrase(2.0, 2, 4), gap(0.5), phrase(2.0, 0, 5) }));
+    auto* t2src = makeTrack(concat({ phrase(2.0, 1), gap(0.5), phrase(2.0, 0, 6), gap(0.5), phrase(2.0, 4) }));
+    auto snapshot = takelanes::snapshotFrom(*main, 0.0);
+    Au3WaveTrack* take1 = takelanes::preserveAsTake(projectRef(), *main, *snapshot, 0.0, 7.0);
+    Au3WaveTrack* take2 = takelanes::preserveAsTake(projectRef(), *main, *snapshot, 0.0, 7.0);
+    for (auto [lane, src] : { std::pair { take1, t1src }, std::pair { take2, t2src } }) {
+        auto audio = std::static_pointer_cast<Au3WaveTrack>(src->Copy(0.0, 7.0, false));
+        lane->ClearAndPaste(0.0, 7.0, *audio);
+    }
+    takelanes::renameTakes(projectRef(), *main);
+    TakeLaneInfo::Get(*main).lanesExpanded = true;
+    auto& tracks = Au3TrackList::Get(projectRef());
+    tracks.Remove(*t1src);
+    tracks.Remove(*t2src);
+    auto lastSaved = TrackList::Create(nullptr);
+    ASSERT_TRUE(ProjectFileIO::Get(projectRef()).SaveProject(wxString(m_workingProjectPath), lastSaved.get()));
+    m_au3ProjectAccessor->clearSavedState();
+    m_au3ProjectAccessor->close();
+    ASSERT_TRUE(testtools::copyFile(m_workingProjectPath, "/workspace/autocomp_demo.aup4"));
+    m_au3ProjectAccessor.reset();
 }
 }
