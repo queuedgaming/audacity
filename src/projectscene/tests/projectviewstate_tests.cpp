@@ -8,6 +8,7 @@
 #include "au3wrap/tests/mocks/au3projectmock.h"
 #include "au3wrap/internal/au3project.h"
 #include "au3wrap/internal/domaccessor.h"
+#include "au3wrap/internal/takelanes.h"
 
 #include "playback/tests/mocks/playbackconfigurationmock.h"
 #include "context/tests/mocks/globalcontextmock.h"
@@ -207,6 +208,55 @@ TEST_F(ProjectViewStateTests, isBelowAllTracks_StartsAtTheBottomOfTheLastTrack)
     EXPECT_FALSE(m_projectViewState->isBelowAllTracks(tracksBottom - 1));
     EXPECT_TRUE(m_projectViewState->isBelowAllTracks(tracksBottom));
     EXPECT_TRUE(m_projectViewState->isBelowAllTracks(tracksBottom + 100));
+}
+
+TEST_F(ProjectViewStateTests, TakeLanes_CollapsedTakesAreHiddenAndTakeNoSpace)
+{
+    const trackedit::TrackIdList tracks = getAllTracks();
+    ASSERT_EQ(tracks.size(), 2) << "Expecting 2 tracks in test.aup4";
+    m_projectViewState->setTrackHeight(tracks[0], 50);
+    m_projectViewState->setTrackHeight(tracks[1], 60);
+
+    //! [GIVEN] The second track is a take lane of the first
+    auto& au3Project = *reinterpret_cast<au3::Au3Project*>(m_au3ProjectAccessor->au3ProjectPtr());
+    auto* main = au3::DomAccessor::findWaveTrack(au3Project, au3::Au3TrackId(tracks[0]));
+    auto* take = au3::DomAccessor::findWaveTrack(au3Project, au3::Au3TrackId(tracks[1]));
+    ASSERT_TRUE(main && take);
+    au3::TakeLaneInfo::Get(*main) = au3::TakeLaneInfo { };
+    au3::TakeLaneInfo::Get(*main).groupId = "group";
+    au3::TakeLaneInfo::Get(*take).groupId = "group";
+    au3::TakeLaneInfo::Get(*take).takeIndex = 1;
+
+    //! [THEN] Roles are reported for the track list
+    EXPECT_EQ(m_projectViewState->takeLaneState(tracks[0]).role, TakeLaneState::Role::Main);
+    EXPECT_EQ(m_projectViewState->takeLaneState(tracks[0]).takeCount, 1);
+    const auto takeState = m_projectViewState->takeLaneState(tracks[1]);
+    EXPECT_EQ(takeState.role, TakeLaneState::Role::Take);
+    EXPECT_EQ(takeState.takeIndex, 1);
+    EXPECT_EQ(takeState.mainTrackId, tracks[0]);
+
+    //! [WHEN] Lanes are expanded: the take is visible and takes its space
+    int notifications = 0;
+    muse::async::Asyncable receiver;
+    m_projectViewState->takeLanesChanged().onNotify(&receiver, [&notifications]() { ++notifications; });
+    m_projectViewState->setTakeLanesExpanded(tracks[0], true);
+    EXPECT_TRUE(m_projectViewState->takeLanesExpanded(tracks[0]));
+    EXPECT_FALSE(m_projectViewState->isTrackHiddenInLanes(tracks[1]).val);
+    EXPECT_EQ(m_projectViewState->totalTrackHeight().val, 110);
+
+    //! [WHEN] Lanes are collapsed: the take is hidden and takes no vertical space
+    m_projectViewState->setTakeLanesExpanded(tracks[0], false);
+    EXPECT_TRUE(m_projectViewState->isTrackHiddenInLanes(tracks[1]).val);
+    EXPECT_EQ(m_projectViewState->totalTrackHeight().val, 50);
+    const auto top = m_projectViewState->trackVerticalPosition(tracks[0]);
+    EXPECT_TRUE(m_projectViewState->isBelowAllTracks(top + 50));
+    EXPECT_EQ(m_projectViewState->trackAtPosition(top + 10), tracks[0]);
+    //! [AND] The real height is kept for when the lanes are expanded again
+    EXPECT_EQ(m_projectViewState->trackHeight(tracks[1]).val, 60);
+    EXPECT_GE(notifications, 2);
+
+    au3::TakeLaneInfo::Get(*main) = au3::TakeLaneInfo { };
+    au3::TakeLaneInfo::Get(*take) = au3::TakeLaneInfo { };
 }
 
 TEST_F(ProjectViewStateTests, isBelowAllTracks_IsFalseWithoutTracks)

@@ -14,6 +14,7 @@
 #include "au3wrap/internal/projectsnap.h"
 #include "au3wrap/internal/domaccessor.h"
 #include "au3wrap/internal/domconverter.h"
+#include "au3wrap/internal/takelanes.h"
 #include "au3wrap/au3types.h"
 #include "trackedit/dom/track.h"
 
@@ -221,6 +222,7 @@ void ProjectViewState::init(const std::shared_ptr<au3::IAu3Project>& project)
 
         updateItemsBoundaries(false);
         prj->trackChanged().onReceive(this, [this](const trackedit::Track&) {
+            recomputeTotalTrackHeight();
             updateItemsBoundaries(false);
         });
 
@@ -302,7 +304,7 @@ int ProjectViewState::trackVerticalPosition(const trackedit::TrackId& trackId) c
 
     for (trackedit::TrackId id : tracks) {
         trackTop = trackBottom;
-        trackBottom = trackTop + trackHeight(id).val;
+        trackBottom = trackTop + effectiveTrackHeight(id);
 
         if (trackId == id) {
             return trackTop;
@@ -364,8 +366,116 @@ ProjectViewState::TrackData& ProjectViewState::makeTrackData(const trackedit::Tr
     return m_tracks.insert({ trackId, d }).first->second;
 }
 
+int ProjectViewState::effectiveTrackHeight(const trackedit::TrackId& trackId) const
+{
+    auto it = m_tracks.find(trackId);
+    if (it != m_tracks.end() && it->second.hiddenInLanes.val) {
+        return 0;
+    }
+    return trackHeight(trackId).val;
+}
+
+TakeLaneState ProjectViewState::takeLaneState(const trackedit::TrackId& trackId) const
+{
+    TakeLaneState state;
+    const project::IAudacityProjectPtr prj = globalContext()->currentProject();
+    if (!prj || !prj->au3ProjectPtr()) {
+        return state;
+    }
+    auto& au3Project = *reinterpret_cast<au3::Au3Project*>(prj->au3ProjectPtr());
+    au3::Au3WaveTrack* track = au3::DomAccessor::findWaveTrack(au3Project, au3::Au3TrackId(trackId));
+    if (!track) {
+        return state;
+    }
+    const auto& info = au3::TakeLaneInfo::Get(*track);
+    if (info.isTake()) {
+        if (au3::Au3WaveTrack* main = au3::takelanes::mainOf(au3Project, *track)) {
+            state.role = TakeLaneState::Role::Take;
+            state.takeIndex = info.takeIndex;
+            state.mainTrackId = main->GetId();
+            state.takeCount = static_cast<int>(au3::takelanes::takesOf(au3Project, *main).size());
+        }
+        return state;
+    }
+    const auto takes = au3::takelanes::takesOf(au3Project, *track);
+    if (!takes.empty()) {
+        state.role = TakeLaneState::Role::Main;
+        state.takeCount = static_cast<int>(takes.size());
+        state.mainTrackId = trackId;
+    }
+    return state;
+}
+
+muse::ValCh<bool> ProjectViewState::isTrackHiddenInLanes(const trackedit::TrackId& trackId) const
+{
+    auto it = m_tracks.find(trackId);
+    if (it != m_tracks.end()) {
+        return it->second.hiddenInLanes;
+    }
+    trackedit::ITrackeditProjectPtr prj = globalContext()->currentTrackeditProject();
+    if (!prj || !prj->track(trackId)) {
+        return {};
+    }
+    return makeTrackData(trackId).hiddenInLanes;
+}
+
+bool ProjectViewState::takeLanesExpanded(const trackedit::TrackId& mainTrackId) const
+{
+    return m_expandedTakeLanes.count(mainTrackId) > 0;
+}
+
+void ProjectViewState::setTakeLanesExpanded(const trackedit::TrackId& mainTrackId, bool expanded)
+{
+    if (takeLanesExpanded(mainTrackId) == expanded) {
+        return;
+    }
+    if (expanded) {
+        m_expandedTakeLanes.insert(mainTrackId);
+    } else {
+        m_expandedTakeLanes.erase(mainTrackId);
+    }
+    recomputeTotalTrackHeight();
+    updateItemsBoundaries(false);
+    m_takeLanesChanged.notify();
+}
+
+muse::async::Notification ProjectViewState::takeLanesChanged() const
+{
+    return m_takeLanesChanged;
+}
+
+void ProjectViewState::refreshTakeLanes()
+{
+    trackedit::ITrackeditProjectPtr prj = globalContext()->currentTrackeditProject();
+    if (!prj) {
+        return;
+    }
+    bool changed = false;
+    for (const trackedit::TrackId& id : prj->trackIdList()) {
+        const TakeLaneState state = takeLaneState(id);
+        const bool hidden = state.role == TakeLaneState::Role::Take && !takeLanesExpanded(state.mainTrackId);
+        auto it = m_tracks.find(id);
+        if (it == m_tracks.end()) {
+            if (!hidden || !prj->track(id)) {
+                continue;
+            }
+            makeTrackData(id);
+            it = m_tracks.find(id);
+        }
+        if (it->second.hiddenInLanes.val != hidden) {
+            it->second.hiddenInLanes.set(hidden);
+            changed = true;
+        }
+    }
+    if (changed) {
+        m_takeLanesChanged.notify();
+    }
+}
+
 void ProjectViewState::recomputeTotalTrackHeight()
 {
+    refreshTakeLanes();
+
     trackedit::ITrackeditProjectPtr prj = globalContext()->currentTrackeditProject();
     if (!prj) {
         m_totalTracksHeight.set(0);
@@ -374,7 +484,7 @@ void ProjectViewState::recomputeTotalTrackHeight()
 
     int total = 0;
     for (const trackedit::TrackId& id : prj->trackIdList()) {
-        total += trackHeight(id).val;
+        total += effectiveTrackHeight(id);
     }
     m_totalTracksHeight.set(total);
 }
@@ -526,7 +636,7 @@ au::trackedit::TrackId ProjectViewState::trackAtPosition(double y) const
 
     for (trackedit::TrackId id : tracks) {
         trackTop = trackBottom;
-        trackBottom = trackTop + trackHeight(id).val;
+        trackBottom = trackTop + effectiveTrackHeight(id);
 
         if (muse::RealIsEqualOrMore(y, trackTop) && muse::RealIsEqualOrLess(y, trackBottom)) {
             return id;
@@ -555,7 +665,7 @@ au::trackedit::TrackIdList ProjectViewState::tracksInRange(double y1, double y2)
     while (i < numTracks) {
         const trackedit::TrackId& trackId = tracks[i];
         const auto trackTop = trackVerticalPosition(trackId);
-        const auto trackBottom = trackTop + trackHeight(trackId).val;
+        const auto trackBottom = trackTop + effectiveTrackHeight(trackId);
         if (y1 < trackBottom) {
             break;
         }
@@ -595,7 +705,7 @@ std::optional<int> ProjectViewState::tracksBottomY() const
 
     int bottomY = -tracksVerticalOffset().val;
     for (const trackedit::TrackId& id : tracks) {
-        bottomY += trackHeight(id).val;
+        bottomY += effectiveTrackHeight(id);
     }
 
     return bottomY;

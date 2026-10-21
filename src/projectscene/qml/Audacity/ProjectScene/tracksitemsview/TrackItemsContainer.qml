@@ -64,6 +64,7 @@ Item {
     property Component contentComponent: null
 
     height: trackViewState.trackHeight
+    visible: !trackViewState.isHiddenLane
 
     property TrackViewStateModel trackViewState: TrackViewStateModel {
         trackId: root.trackId

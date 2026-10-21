@@ -12,6 +12,7 @@
 #include "playback/iplaybackcontroller.h"
 #include "playback/iplaybackconfiguration.h"
 #include "record/irecordcontroller.h"
+#include "record/irecord.h"
 
 #include "playback/view/common/playbackmetermodel.h"
 #include "types/val.h"
@@ -28,6 +29,14 @@ class TrackViewStateModel : public QObject, public muse::Contextable, public mus
     Q_PROPERTY(QVariant displayBounds READ displayBounds NOTIFY displayBoundsChanged FINAL)
     Q_PROPERTY(bool isLinear READ isLinear NOTIFY isLinearChanged FINAL)
 
+    //! Take lanes: 0 = ordinary track, 1 = main track with takes, 2 = take lane
+    Q_PROPERTY(int takeRole READ takeRole NOTIFY takeLanesChanged FINAL)
+    Q_PROPERTY(int takeIndex READ takeIndex NOTIFY takeLanesChanged FINAL)
+    Q_PROPERTY(int takeCount READ takeCount NOTIFY takeLanesChanged FINAL)
+    Q_PROPERTY(QString takeLabel READ takeLabel NOTIFY takeLanesChanged FINAL)
+    Q_PROPERTY(bool takeLanesExpanded READ takeLanesExpanded NOTIFY takeLanesChanged FINAL)
+    Q_PROPERTY(bool isHiddenLane READ isHiddenLane NOTIFY takeLanesChanged FINAL)
+
     Q_PROPERTY(bool isPlaying READ isPlaying NOTIFY isPlayingChanged FINAL)
     Q_PROPERTY(bool isRecording READ isRecording NOTIFY isRecordingChanged FINAL)
 
@@ -38,6 +47,7 @@ class TrackViewStateModel : public QObject, public muse::Contextable, public mus
     muse::ContextInject<context::IGlobalContext> globalContext{ this };
     muse::ContextInject<playback::IPlaybackController> playbackController{ this };
     muse::ContextInject<record::IRecordController> recordController{ this };
+    muse::ContextInject<record::IRecord> record{ this };
 
 public:
     TrackViewStateModel(QObject* parent = nullptr);
@@ -60,6 +70,16 @@ public:
 
     playback::PlaybackMeterModel* meterModel() const;
 
+    int takeRole() const;
+    int takeIndex() const;
+    int takeCount() const;
+    QString takeLabel() const;
+    bool takeLanesExpanded() const;
+    bool isHiddenLane() const;
+    Q_INVOKABLE void toggleTakeLanes();
+    //! Make this take lane the active take (same as the "Activate take" action)
+    Q_INVOKABLE void activateTake();
+
     bool isPlaying() const;
     bool isRecording() const;
 
@@ -73,6 +93,7 @@ signals:
     void isRecordingChanged();
     void displayBoundsChanged();
     void isLinearChanged();
+    void takeLanesChanged();
 
 private:
     IProjectViewStatePtr viewState() const;
@@ -83,6 +104,8 @@ private:
     muse::ValCh<double> m_channelHeightRatio;
     muse::ValCh<std::pair<float, float> > m_displayBounds;
     muse::ValCh<int> m_rulerType;
+    muse::ValCh<bool> m_isHiddenLane;
+    TakeLaneState m_takeLaneState;
 
     playback::PlaybackMeterModel* m_meterModel = nullptr;
 };

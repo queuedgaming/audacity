@@ -14,6 +14,11 @@ public:
     MOCK_METHOD(muse::ValCh<int>, totalTrackHeight, (), (const, override));
     MOCK_METHOD(muse::ValCh<int>, trackHeight, (const trackedit::TrackId&), (const, override));
     MOCK_METHOD(muse::ValCh<bool>, isTrackCollapsed, (const trackedit::TrackId&), (const, override));
+    MOCK_METHOD(TakeLaneState, takeLaneState, (const trackedit::TrackId&), (const, override));
+    MOCK_METHOD(muse::ValCh<bool>, isTrackHiddenInLanes, (const trackedit::TrackId&), (const, override));
+    MOCK_METHOD(bool, takeLanesExpanded, (const trackedit::TrackId&), (const, override));
+    MOCK_METHOD(void, setTakeLanesExpanded, (const trackedit::TrackId&, bool), (override));
+    MOCK_METHOD(muse::async::Notification, takeLanesChanged, (), (const, override));
     MOCK_METHOD(muse::ValCh<double>, channelHeightRatio, (const trackedit::TrackId&), (const, override));
 
     MOCK_METHOD(int, trackVerticalPosition, (const trackedit::TrackId&), (const, override));

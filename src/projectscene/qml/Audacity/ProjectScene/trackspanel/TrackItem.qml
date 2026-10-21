@@ -65,6 +65,8 @@ ListItemBlank {
     }
 
     height: trackViewState.trackHeight
+    //! Take lanes of a collapsed main track are hidden (zero height)
+    visible: !trackViewState.isHiddenLane
     opacity: dragged ? 0.5 : 1
 
     focusBorder.anchors.leftMargin: spacer.width + 2
@@ -175,6 +177,22 @@ ListItemBlank {
 
                 spacing: 8
 
+                //! Take lanes: expand/collapse toggle on a main track with takes
+                FlatButton {
+                    id: takeLanesToggle
+                    objectName: "TakeLanesToggle"
+                    visible: trackViewState.takeRole === 1
+                    Layout.preferredWidth: 20
+                    Layout.preferredHeight: 20
+                    transparent: true
+                    icon: trackViewState.takeLanesExpanded ? IconCode.SMALL_ARROW_DOWN : IconCode.SMALL_ARROW_RIGHT
+                    toolTipTitle: trackViewState.takeLanesExpanded ? qsTrc("projectscene", "Collapse take lanes")
+                                                                   : qsTrc("projectscene", "Expand take lanes")
+                    navigation.panel: root.headerNavigationPanel
+                    navigation.accessible.name: toolTipTitle
+                    onClicked: trackViewState.toggleTakeLanes()
+                }
+
                 StyledIconLabel {
                     iconCode: Boolean(root.item) ? root.item.icon : 0
                 }
@@ -195,6 +213,26 @@ ListItemBlank {
                             root.item.title = text
                         }
                     }
+                }
+
+                //! Take lanes: take count on a main track; on a take lane, a button that makes it the active take
+                StyledTextLabel {
+                    visible: trackViewState.takeRole === 1
+                    text: trackViewState.takeLabel
+                    opacity: 0.7
+                }
+
+                FlatButton {
+                    id: takeButton
+                    objectName: "ActivateTakeButton"
+                    visible: trackViewState.takeRole === 2
+                    Layout.preferredWidth: 56
+                    Layout.preferredHeight: 20
+                    text: trackViewState.takeLabel
+                    toolTipTitle: qsTrc("projectscene", "Make this the active take")
+                    navigation.panel: root.headerNavigationPanel
+                    navigation.accessible.name: toolTipTitle
+                    onClicked: trackViewState.activateTake()
                 }
 
                 Loader {

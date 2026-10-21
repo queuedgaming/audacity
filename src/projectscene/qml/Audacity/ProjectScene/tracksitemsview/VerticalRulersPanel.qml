@@ -55,6 +55,7 @@ Rectangle {
 
             width: root.width
             height: trackViewState.trackHeight
+            visible: !trackViewState.isHiddenLane
 
             sourceComponent: model.trackType !== TrackType.LABEL ? waveComp : emptyComp
 

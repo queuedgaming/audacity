@@ -10,6 +10,19 @@
 #include "types/secs.h"
 
 namespace au::projectscene {
+//! Take-lane role of a track as shown in the track list
+struct TakeLaneState {
+    enum class Role {
+        None,   //!< ordinary track
+        Main,   //!< track that has take lanes
+        Take,   //!< take lane of a main track
+    };
+    Role role = Role::None;
+    int takeIndex = 0;              //!< 1-based for takes
+    int takeCount = 0;              //!< number of takes (for the main track)
+    trackedit::TrackId mainTrackId = -1;
+};
+
 class IProjectViewState
 {
 public:
@@ -20,6 +33,13 @@ public:
     virtual muse::ValCh<int> trackHeight(const trackedit::TrackId& trackId) const = 0;
     virtual muse::ValCh<bool> isTrackCollapsed(const trackedit::TrackId& trackId) const = 0;
     virtual muse::ValCh<double> channelHeightRatio(const trackedit::TrackId& trackId) const = 0;
+
+    //! Take lanes: takes are hidden (zero height) while their main track's lanes are collapsed
+    virtual TakeLaneState takeLaneState(const trackedit::TrackId& trackId) const = 0;
+    virtual muse::ValCh<bool> isTrackHiddenInLanes(const trackedit::TrackId& trackId) const = 0;
+    virtual bool takeLanesExpanded(const trackedit::TrackId& mainTrackId) const = 0;
+    virtual void setTakeLanesExpanded(const trackedit::TrackId& mainTrackId, bool expanded) = 0;
+    virtual muse::async::Notification takeLanesChanged() const = 0;
 
     virtual int trackVerticalPosition(const trackedit::TrackId& trackId) const = 0;
     virtual void changeTrackHeight(const trackedit::TrackId& trackId, int deltaY) = 0;

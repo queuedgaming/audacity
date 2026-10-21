@@ -3,6 +3,8 @@
 */
 #include "trackviewstatemodel.h"
 
+#include "framework/global/translation.h"
+
 using namespace au::projectscene;
 using namespace au::project;
 
@@ -81,6 +83,25 @@ void TrackViewStateModel::init()
             emit isLinearChanged();
         }, muse::async::Asyncable::Mode::SetReplace);
 
+        m_isHiddenLane = vs->isTrackHiddenInLanes(m_trackId);
+        m_isHiddenLane.ch.onReceive(this, [this](bool hidden) {
+            if (m_isHiddenLane.val == hidden) {
+                return;
+            }
+            m_isHiddenLane.val = hidden;
+            emit trackHeightChanged();
+            emit takeLanesChanged();
+        }, muse::async::Asyncable::Mode::SetReplace);
+
+        m_takeLaneState = vs->takeLaneState(m_trackId);
+        vs->takeLanesChanged().onNotify(this, [this]() {
+            if (auto v = viewState()) {
+                m_takeLaneState = v->takeLaneState(m_trackId);
+            }
+            emit takeLanesChanged();
+        }, muse::async::Asyncable::Mode::SetReplace);
+
+        emit takeLanesChanged();
         emit trackHeightChanged();
         emit isTrackCollapsedChanged();
         emit channelHeightRatioChanged();
@@ -134,7 +155,65 @@ void TrackViewStateModel::setTrackId(const QVariant& _newTrackId)
 
 int TrackViewStateModel::trackHeight() const
 {
-    return m_trackHeight.val;
+    return m_isHiddenLane.val ? 0 : m_trackHeight.val;
+}
+
+int TrackViewStateModel::takeRole() const
+{
+    return static_cast<int>(m_takeLaneState.role);
+}
+
+int TrackViewStateModel::takeIndex() const
+{
+    return m_takeLaneState.takeIndex;
+}
+
+int TrackViewStateModel::takeCount() const
+{
+    return m_takeLaneState.takeCount;
+}
+
+QString TrackViewStateModel::takeLabel() const
+{
+    switch (m_takeLaneState.role) {
+    case TakeLaneState::Role::Take:
+        //: Label of a take lane; %1 is the take number
+        return muse::qtrc("projectscene", "Take %1").arg(m_takeLaneState.takeIndex);
+    case TakeLaneState::Role::Main:
+        //: Shown on a track that has take lanes; %1 is the number of takes
+        return m_takeLaneState.takeCount == 1 ? muse::qtrc("projectscene", "1 take")
+               : muse::qtrc("projectscene", "%1 takes").arg(m_takeLaneState.takeCount);
+    case TakeLaneState::Role::None:
+        break;
+    }
+    return QString();
+}
+
+bool TrackViewStateModel::takeLanesExpanded() const
+{
+    IProjectViewStatePtr vs = viewState();
+    return vs && m_takeLaneState.role == TakeLaneState::Role::Main && vs->takeLanesExpanded(m_trackId);
+}
+
+bool TrackViewStateModel::isHiddenLane() const
+{
+    return m_isHiddenLane.val;
+}
+
+void TrackViewStateModel::toggleTakeLanes()
+{
+    IProjectViewStatePtr vs = viewState();
+    if (vs && m_takeLaneState.role == TakeLaneState::Role::Main) {
+        vs->setTakeLanesExpanded(m_trackId, !vs->takeLanesExpanded(m_trackId));
+    }
+}
+
+void TrackViewStateModel::activateTake()
+{
+    if (m_takeLaneState.role == TakeLaneState::Role::Take
+        && record()->canSwitchTake(m_trackId, record::TakeSwitch::Activate)) {
+        record()->switchTake(m_trackId, record::TakeSwitch::Activate);
+    }
 }
 
 bool TrackViewStateModel::isTrackCollapsed() const

@@ -3,6 +3,8 @@
 */
 #pragma once
 
+#include <set>
+
 #include <optional>
 
 #include "framework/global/async/asyncable.h"
@@ -41,6 +43,11 @@ public:
     muse::ValCh<int> totalTrackHeight() const override;
     muse::ValCh<int> trackHeight(const trackedit::TrackId& trackId) const override;
     muse::ValCh<bool> isTrackCollapsed(const trackedit::TrackId& trackId) const override;
+    TakeLaneState takeLaneState(const trackedit::TrackId& trackId) const override;
+    muse::ValCh<bool> isTrackHiddenInLanes(const trackedit::TrackId& trackId) const override;
+    bool takeLanesExpanded(const trackedit::TrackId& mainTrackId) const override;
+    void setTakeLanesExpanded(const trackedit::TrackId& mainTrackId, bool expanded) override;
+    muse::async::Notification takeLanesChanged() const override;
     muse::ValCh<double> channelHeightRatio(const trackedit::TrackId& trackId) const override;
 
     int trackVerticalPosition(const trackedit::TrackId& trackId) const override;
@@ -153,6 +160,7 @@ private:
         muse::ValCh<bool> isHalfWave;
         muse::ValCh<int> rulerType;
         muse::ValCh<trackedit::TrackViewType> viewType;
+        muse::ValCh<bool> hiddenInLanes;
     };
 
     mutable muse::ValCh<int> m_totalTracksHeight;
@@ -160,6 +168,10 @@ private:
 
     TrackData& makeTrackData(const trackedit::TrackId& trackId) const;
     void recomputeTotalTrackHeight();
+    void refreshTakeLanes();
+    int effectiveTrackHeight(const trackedit::TrackId& trackId) const;
+    std::set<trackedit::TrackId> m_expandedTakeLanes;
+    muse::async::Notification m_takeLanesChanged;
     bool doSetTrackViewType(const trackedit::TrackId& trackId, trackedit::TrackViewType viewType);
 
     bool eventFilter(QObject* watched, QEvent* event) override;
