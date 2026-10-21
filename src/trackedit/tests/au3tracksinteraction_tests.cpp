@@ -2064,4 +2064,64 @@ TEST_F(Au3TracksInteractionTests, TakeLanesMovingAnotherTrackStepsOverTheWholeGr
     removeTrack(mainId);
     removeTrack(otherId);
 }
+
+TEST_F(Au3TracksInteractionTests, TakeLanesDuplicatingMainTrackGivesCopiesTheirOwnGroup)
+{
+    //! [GIVEN] main with one take
+    const TrackId mainId = createTrack(TestTrackID::TRACK_TWO_CLIPS);
+    auto* take = makeTakeOf(projectRef(), mainId);
+    ASSERT_NE(take, nullptr);
+    auto* main = DomAccessor::findWaveTrack(projectRef(), au3::Au3TrackId(mainId));
+
+    //! [WHEN] Only the main track is duplicated
+    ASSERT_TRUE(m_tracksInteraction->duplicateTracks({ mainId }));
+
+    //! [THEN] Its take is duplicated too, the copies form their own group below the copied main
+    auto& tracks = Au3TrackList::Get(projectRef());
+    ASSERT_EQ(tracks.Size(), 4u);
+    auto it = tracks.Any<au3::Au3WaveTrack>().begin();
+    std::vector<au3::Au3WaveTrack*> order;
+    for (auto* t : tracks.Any<au3::Au3WaveTrack>()) {
+        order.push_back(t);
+    }
+    UNUSED(it);
+    ASSERT_EQ(order[0], main);
+    ASSERT_EQ(order[1], take);
+    auto* mainCopy = order[2];
+    auto* takeCopy = order[3];
+    const auto& origInfo = au3::TakeLaneInfo::Get(*main);
+    const auto& copyInfo = au3::TakeLaneInfo::Get(*mainCopy);
+    EXPECT_FALSE(copyInfo.isTake());
+    EXPECT_NE(copyInfo.groupId, origInfo.groupId);
+    EXPECT_EQ(au3::TakeLaneInfo::Get(*takeCopy).groupId, copyInfo.groupId);
+
+    EXPECT_EQ(au3::takelanes::takesOf(projectRef(), *main), std::vector<au3::Au3WaveTrack*>{ take });
+    EXPECT_EQ(au3::takelanes::takesOf(projectRef(), *mainCopy), std::vector<au3::Au3WaveTrack*>{ takeCopy });
+
+    for (auto* t : order) {
+        removeTrack(t->GetId());
+    }
+}
+
+TEST_F(Au3TracksInteractionTests, TakeLanesDuplicatingOnlyATakeMakesAPlainTrack)
+{
+    const TrackId mainId = createTrack(TestTrackID::TRACK_TWO_CLIPS);
+    auto* take = makeTakeOf(projectRef(), mainId);
+    ASSERT_NE(take, nullptr);
+
+    ASSERT_TRUE(m_tracksInteraction->duplicateTracks({ take->GetId() }));
+
+    std::vector<au3::Au3WaveTrack*> order;
+    for (auto* t : Au3TrackList::Get(projectRef()).Any<au3::Au3WaveTrack>()) {
+        order.push_back(t);
+    }
+    ASSERT_EQ(order.size(), 3u);
+    EXPECT_FALSE(au3::TakeLaneInfo::Get(*order[2]).isInGroup());
+    auto* main = DomAccessor::findWaveTrack(projectRef(), au3::Au3TrackId(mainId));
+    EXPECT_EQ(au3::takelanes::takesOf(projectRef(), *main).size(), 1u);
+
+    for (auto* t : order) {
+        removeTrack(t->GetId());
+    }
+}
 }

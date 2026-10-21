@@ -4,6 +4,7 @@
 #include "takelanes.h"
 
 #include <algorithm>
+#include <map>
 #include <random>
 #include <sstream>
 
@@ -195,6 +196,35 @@ void swapRegion(WaveTrack& a, WaveTrack& b, double s, double e)
         b.Clear(s, e, false);
     }
 }
+}
+
+void takelanes::regroupCopies(const std::vector<Track*>& copies)
+{
+    std::map<std::string, std::string> newIds; // old group -> new group, for groups whose main was copied
+    for (auto* t : copies) {
+        if (auto* wt = dynamic_cast<WaveTrack*>(t)) {
+            const auto& info = TakeLaneInfo::Get(*wt);
+            if (info.isInGroup() && !info.isTake()) {
+                newIds[info.groupId] = newGroupId();
+            }
+        }
+    }
+    for (auto* t : copies) {
+        auto* wt = dynamic_cast<WaveTrack*>(t);
+        if (!wt) {
+            continue;
+        }
+        auto& info = TakeLaneInfo::Get(*wt);
+        if (!info.isInGroup()) {
+            continue;
+        }
+        const auto it = newIds.find(info.groupId);
+        if (it != newIds.end()) {
+            info.groupId = it->second;
+        } else {
+            info = TakeLaneInfo {}; // orphaned take copy: plain track
+        }
+    }
 }
 
 WaveTrack* takelanes::mainOf(AudacityProject& project, const WaveTrack& track)

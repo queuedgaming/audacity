@@ -860,14 +860,26 @@ bool Au3TracksInteraction::deleteTracks(const TrackIdList& requestedTrackIds)
     return true;
 }
 
-bool Au3TracksInteraction::duplicateTracks(const TrackIdList& trackIds)
+bool Au3TracksInteraction::duplicateTracks(const TrackIdList& requestedTrackIds)
 {
-    if (trackIds.empty()) {
+    if (requestedTrackIds.empty()) {
         return false;
     }
 
     auto& project = projectRef();
     auto& tracks = Au3TrackList::Get(project);
+
+    // Duplicating a main track duplicates its take lanes too
+    TrackIdList trackIds = requestedTrackIds;
+    for (const auto& trackId : requestedTrackIds) {
+        if (auto* waveTrack = DomAccessor::findWaveTrack(project, Au3TrackId(trackId))) {
+            for (auto* take : au3::takelanes::takesOf(project, *waveTrack)) {
+                if (!muse::contains(trackIds, TrackId(take->GetId()))) {
+                    trackIds.push_back(take->GetId());
+                }
+            }
+        }
+    }
 
     trackedit::ITrackeditProjectPtr prj = globalContext()->currentTrackeditProject();
 
@@ -892,6 +904,7 @@ bool Au3TracksInteraction::duplicateTracks(const TrackIdList& trackIds)
         trackClones.push_back(clone.get());
     }
     utils::remapCopiedItemGroups(*prj, tracks, trackClones);
+    au3::takelanes::regroupCopies(trackClones);
 
     for (const auto& au3Clone : clones) {
         tracks.Add(au3Clone, ::TrackList::DoAssignId::Yes);
@@ -906,6 +919,8 @@ bool Au3TracksInteraction::duplicateTracks(const TrackIdList& trackIds)
             }
         }
     }
+
+    restackTakeLanes();
 
     return true;
 }

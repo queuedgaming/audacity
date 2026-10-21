@@ -14,6 +14,7 @@
 
 class AudacityProject;
 class ChannelGroup;
+class Track;
 class WaveTrack;
 class XMLWriter;
 
@@ -53,6 +54,10 @@ WaveTrack* preserveAsTake(AudacityProject& project, WaveTrack& mainTrack,
 
 //! All take tracks of `mainTrack`, ordered by take index.
 std::vector<WaveTrack*> takesOf(AudacityProject& project, const WaveTrack& mainTrack);
+
+//! Give freshly copied tracks their own take groups so they don't join the originals'.
+//! Takes copied without their main track become ordinary tracks.
+void regroupCopies(const std::vector<Track*>& copies);
 
 //! Main track of a take track (null if `track` is not a take or its main is gone)
 WaveTrack* mainOf(AudacityProject& project, const WaveTrack& track);
