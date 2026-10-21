@@ -7,6 +7,10 @@
 #include "au3-xml/XMLWriter.h"
 
 #include <algorithm>
+#include <cmath>
+#include <cstdio>
+
+#include "au3-project-history/UndoManager.h"
 
 using namespace au::au3;
 
@@ -25,6 +29,65 @@ ProjectKey& ProjectKey::Get(AudacityProject& project)
 const ProjectKey& ProjectKey::Get(const AudacityProject& project)
 {
     return Get(const_cast<AudacityProject&>(project));
+}
+
+void ProjectKey::setKey(const std::optional<Key>& key)
+{
+    m_key = key;
+    m_keyChanged.notify();
+}
+
+std::string ProjectKey::tonicName(int tonic)
+{
+    static const char* names[] = { "C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B" };
+    return names[((tonic % 12) + 12) % 12];
+}
+
+std::string ProjectKey::shortLabel(const std::optional<Key>& key)
+{
+    if (!key) {
+        return "No key";
+    }
+    const double hz = 440.0 * std::pow(2.0, key->tuningCents / 1200.0);
+    const double rounded = std::round(hz * 10.0) / 10.0;
+    char buf[32];
+    if (std::fabs(rounded - std::round(rounded)) < 0.05) {
+        std::snprintf(buf, sizeof(buf), "A%d", int(std::lround(rounded)));
+    } else {
+        std::snprintf(buf, sizeof(buf), "A%.1f", rounded);
+    }
+    return tonicName(key->tonic) + (key->minor ? " min, " : " maj, ") + buf;
+}
+
+namespace {
+//! Undo/redo: every history state remembers the key it had
+class ProjectKeyRestorer final : public UndoStateExtension
+{
+public:
+    explicit ProjectKeyRestorer(AudacityProject& project)
+        : m_key(ProjectKey::Get(project).key()) {}
+
+    void RestoreUndoRedoState(AudacityProject& project) override
+    {
+        auto& pk = ProjectKey::Get(project);
+        const auto& cur = pk.key();
+        const bool same = cur.has_value() == m_key.has_value()
+                          && (!cur || (cur->tonic == m_key->tonic && cur->minor == m_key->minor
+                                       && cur->tuningCents == m_key->tuningCents));
+        if (!same) {
+            pk.setKey(m_key);
+        }
+    }
+
+private:
+    std::optional<ProjectKey::Key> m_key;
+};
+
+UndoRedoExtensionRegistry::Entry<ProjectKeyRestorer> sRestorerEntry {
+    [](AudacityProject& project) -> std::shared_ptr<UndoStateExtension> {
+        return std::make_shared<ProjectKeyRestorer>(project);
+    }
+};
 }
 
 static ProjectFileIORegistry::AttributeWriterEntry entry {

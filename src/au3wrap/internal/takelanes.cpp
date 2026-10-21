@@ -458,7 +458,8 @@ std::vector<float> monoSamples(const WaveTrack& track, sampleCount s0, size_t le
 }
 
 std::vector<takelanes::AutoCompChoice> takelanes::autoComp(AudacityProject& project, WaveTrack& mainTrack,
-                                                           double minSegmentSec, double crossfade, bool pitchScoring)
+                                                           double minSegmentSec, double crossfade, bool pitchScoring,
+                                                           std::string* keySummary)
 {
     auto takes = takesOf(project, mainTrack);
     takes.erase(std::remove_if(takes.begin(), takes.end(), [](WaveTrack* t) { return t->Intervals().empty(); }),
@@ -487,7 +488,20 @@ std::vector<takelanes::AutoCompChoice> takelanes::autoComp(AudacityProject& proj
         settings.key = keydetect::KeyCandidate { k->tonic, k->minor, 1.0 };
         settings.tuningCents = k->tuningCents;
     }
-    const auto segments = autocomp::compute(lanes, rate, settings);
+    autocomp::Analysis analysis;
+    const auto segments = autocomp::compute(lanes, rate, settings, &analysis);
+    if (keySummary) {
+        if (!pitchScoring) {
+            *keySummary = "pitch scoring off";
+        } else if (settings.key) {
+            *keySummary = "project key " + ProjectKey::shortLabel(ProjectKey::Get(project).key());
+        } else if (analysis.grid.scale) {
+            *keySummary = "detected " + ProjectKey::shortLabel(ProjectKey::Key { analysis.key.key.tonic, analysis.key.key.minor,
+                                                                                 analysis.grid.tuningCents, 0.0 });
+        } else {
+            *keySummary = "no clear key, chromatic";
+        }
+    }
 
     std::vector<AutoCompChoice> choices;
     for (const auto& seg : segments) {

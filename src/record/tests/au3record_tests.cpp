@@ -1422,4 +1422,144 @@ TEST_F(Au3RecordTests, DISABLED_MakeKeyDemoProject)
     ASSERT_TRUE(testtools::copyFile(m_workingProjectPath, "/workspace/key_demo.aup4"));
     m_au3ProjectAccessor.reset();
 }
+
+// ---------------------------------------------------------------------------------------------
+// Project key: editing, undo, persistence
+TEST(ProjectKeyTests, ShortLabels)
+{
+    using au::au3::ProjectKey;
+    EXPECT_EQ(ProjectKey::shortLabel(std::nullopt), "No key");
+    EXPECT_EQ(ProjectKey::shortLabel(ProjectKey::Key { 2, true, 1200.0 * std::log2(442.0 / 440.0), 1.0 }), "D min, A442");
+    EXPECT_EQ(ProjectKey::shortLabel(ProjectKey::Key { 3, false, 0.0, 1.0 }), "Eb maj, A440");
+    EXPECT_EQ(ProjectKey::shortLabel(ProjectKey::Key { 9, false, 1200.0 * std::log2(442.5 / 440.0), 1.0 }), "A maj, A442.5");
+}
+
+TEST_F(Au3RecordTests, ProjectKeyEditsAndClearsAreOneUndoStepEach)
+{
+    auto& history = ::ProjectHistory::Get(projectRef());
+    history.InitialState();
+    std::vector<std::string> pushed;
+    EXPECT_CALL(*m_projectHistory, pushHistoryState(_, _)).WillRepeatedly([&](const std::string& l, const std::string& s) {
+        pushed.push_back(s);
+        history.PushState(::TranslatableString::untranslatable(wxString(l)), ::TranslatableString::untranslatable(wxString(s)));
+    });
+    int notified = 0;
+    muse::async::Asyncable listener;
+    m_record->projectKeyChanged().onNotify(&listener, [&notified]() { ++notified; });
+    const double a442 = 1200.0 * std::log2(442.0 / 440.0);
+
+    //! [GIVEN] No key
+    EXPECT_FALSE(m_record->projectKey().has_value());
+    //! [WHEN] Set D minor at A442, set it again, edit to A major, then clear
+    ASSERT_TRUE(m_record->setProjectKey(ProjectKeyInfo { 2, true, a442 }));
+    ASSERT_TRUE(m_record->setProjectKey(ProjectKeyInfo { 2, true, a442 })); // unchanged: no history entry
+    ASSERT_TRUE(m_record->setProjectKey(ProjectKeyInfo { 9, false, 0.0 }));
+    ASSERT_TRUE(m_record->setProjectKey(std::nullopt));
+    EXPECT_FALSE(m_record->setProjectKey(ProjectKeyInfo { 12, false, 0.0 })); // invalid root rejected
+    //! [THEN] Three history entries, listeners told each time
+    EXPECT_EQ(pushed.size(), 3u);
+    EXPECT_FALSE(m_record->projectKey().has_value());
+    EXPECT_EQ(notified, 3);
+    EXPECT_EQ(m_record->projectKeyLabel(std::nullopt), "No key");
+
+    //! [AND] Each undo goes back one edit
+    auto undo = [&]() {
+        UndoManager::Get(projectRef()).Undo([&history](const UndoStackElem& elem) { history.PopState(elem.state); });
+    };
+    undo();
+    ASSERT_TRUE(m_record->projectKey().has_value());
+    EXPECT_EQ(*m_record->projectKey(), (ProjectKeyInfo { 9, false, 0.0 }));
+    undo();
+    ASSERT_TRUE(m_record->projectKey().has_value());
+    EXPECT_EQ(m_record->projectKey()->tonic, 2);
+    EXPECT_TRUE(m_record->projectKey()->minor);
+    undo();
+    EXPECT_FALSE(m_record->projectKey().has_value());
+    EXPECT_FALSE(history.UndoAvailable());
+    //! [AND] Redo re-applies
+    UndoManager::Get(projectRef()).Redo([&history](const UndoStackElem& elem) { history.PopState(elem.state); });
+    ASSERT_TRUE(m_record->projectKey().has_value());
+    EXPECT_EQ(m_record->projectKey()->tonic, 2);
+    EXPECT_GE(notified, 6);
+    m_record->projectKeyChanged().disconnect(&listener);
+}
+
+TEST_F(Au3RecordTests, ProjectKeySurvivesSaveCloseAndReopen)
+{
+    const double a435 = 1200.0 * std::log2(435.0 / 440.0);
+    //! [GIVEN] F# minor at A = 435 stored in the project, which is saved and closed
+    ASSERT_TRUE(m_record->setProjectKey(ProjectKeyInfo { 6, true, a435 }));
+    auto lastSaved = TrackList::Create(nullptr);
+    ASSERT_TRUE(ProjectFileIO::Get(projectRef()).SaveProject(wxString(m_workingProjectPath), lastSaved.get()));
+    m_au3ProjectAccessor->clearSavedState();
+    m_au3ProjectAccessor->close();
+    m_au3ProjectAccessor.reset();
+
+    //! [WHEN] Reopened
+    m_au3ProjectAccessor = std::make_shared<Au3ProjectAccessor>(muse::modularity::globalCtx());
+    ASSERT_TRUE(m_au3ProjectAccessor->load(muse::io::path_t(m_workingProjectPath), false));
+    ON_CALL(*m_currentProject, au3ProjectPtr()).WillByDefault(Return(m_au3ProjectAccessor->au3ProjectPtr()));
+
+    //! [THEN] The key and tuning are back
+    const auto key = m_record->projectKey();
+    ASSERT_TRUE(key.has_value());
+    EXPECT_EQ(key->tonic, 6);
+    EXPECT_TRUE(key->minor);
+    EXPECT_NEAR(key->tuningCents, a435, 1e-6);
+    EXPECT_EQ(m_record->projectKeyLabel(key), "F# min, A435");
+
+    //! [AND] Clearing and saving again leaves no key after another reopen
+    ASSERT_TRUE(m_record->setProjectKey(std::nullopt));
+    auto lastSaved2 = TrackList::Create(nullptr);
+    ASSERT_TRUE(ProjectFileIO::Get(projectRef()).SaveProject(wxString(m_workingProjectPath), lastSaved2.get()));
+    m_au3ProjectAccessor->clearSavedState();
+    m_au3ProjectAccessor->close();
+    m_au3ProjectAccessor.reset();
+    m_au3ProjectAccessor = std::make_shared<Au3ProjectAccessor>(muse::modularity::globalCtx());
+    ASSERT_TRUE(m_au3ProjectAccessor->load(muse::io::path_t(m_workingProjectPath), false));
+    ON_CALL(*m_currentProject, au3ProjectPtr()).WillByDefault(Return(m_au3ProjectAccessor->au3ProjectPtr()));
+    EXPECT_FALSE(m_record->projectKey().has_value());
+}
+
+TEST_F(Au3RecordTests, DetectKeyDoesNotStoreUnlessAsked)
+{
+    const auto x = melody(minorTune(62), 0.0, TEST_SAMPLE_RATE);
+    auto* t = addSelectedMonoTrack();
+    t->Append(0, reinterpret_cast<constSamplePtr>(x.data()), floatSample, x.size());
+    t->Flush();
+    EXPECT_CALL(*m_projectHistory, pushHistoryState(_, _)).Times(0);
+    const KeyDetection r = m_record->detectKey(t->GetId(), 0.0, 0.0, false);
+    ASSERT_TRUE(r.valid);
+    EXPECT_EQ(r.keyName, "D minor");
+    EXPECT_FALSE(m_record->projectKey().has_value());
+}
+
+TEST_F(Au3RecordTests, AutoCompReportsTheKeyItUsed)
+{
+    //! [GIVEN] Main and one take with a C major tune
+    const std::vector<std::vector<int> > ctx { { 60, 62, 64, 65, 67, 65, 64, 62 }, { 60, 64, 67, 72, 67, 64, 60, 60 } };
+    std::vector<std::pair<double, double> > notes;
+    for (const auto& ph : ctx) {
+        for (int m : ph) {
+            notes.push_back({ m, 0.25 });
+        }
+        notes.push_back({ -1, 0.5 });
+    }
+    const auto x = melody(notes, 0.0, TEST_SAMPLE_RATE);
+    auto* main = addSelectedMonoTrack();
+    main->Append(0, reinterpret_cast<constSamplePtr>(x.data()), floatSample, x.size());
+    main->Flush();
+    const double len = main->GetEndTime();
+    auto snapshot = takelanes::snapshotFrom(*main, 0.0);
+    ASSERT_TRUE(takelanes::preserveAsTake(projectRef(), *main, *snapshot, 0.0, len));
+
+    //! [WHEN] Auto-comp without, then with a project key
+    std::string summary;
+    takelanes::autoComp(projectRef(), *main, 2.0, 0.0, true, &summary);
+    EXPECT_EQ(summary.rfind("detected C maj", 0), 0u) << summary;
+    au::au3::ProjectKey::Get(projectRef()).setKey(au::au3::ProjectKey::Key { 7, false, 0.0, 1.0 });
+    takelanes::autoComp(projectRef(), *main, 2.0, 0.0, true, &summary);
+    //! [THEN] The stored key is used and reported
+    EXPECT_EQ(summary, "project key G maj, A440");
+}
 }

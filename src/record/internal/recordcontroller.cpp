@@ -318,7 +318,7 @@ Ret RecordController::detectKey()
     if (!(t1 > t0)) {
         t0 = t1 = 0.0; // whole track
     }
-    const KeyDetection r = record()->detectKey(*takeTargetTrack(), t0, t1, /*store*/ true);
+    const KeyDetection r = record()->detectKey(*takeTargetTrack(), t0, t1, /*store*/ false);
     std::string body;
     if (!r.valid) {
         body = muse::trc("record", "Not enough pitched audio to estimate a key.");
@@ -345,11 +345,24 @@ Ret RecordController::detectKey()
                 body += (i ? ", " : " ") + r.alternatives[i].first + " (r " + fixed(r.alternatives[i].second, 2) + ")";
             }
         }
-        body += "\n\n" + muse::trc("record", "Stored as the project key; auto-comp scores intonation against this scale.");
+        const auto current = record()->projectKey();
+        body += "\n\n" + muse::qtrc("record", "Current project key: %1. Choose \"Use as project key\" to store this result "
+                                      "(one undo step); auto-comp then scores intonation against its scale.")
+                .arg(QString::fromStdString(record()->projectKeyLabel(current))).toStdString();
     }
-    interactive()->infoSync(muse::trc("record", "Detect key"), muse::IInteractive::Text(body), {
-        muse::IInteractive::ButtonData(muse::IInteractive::Button::Ok, muse::trc("record", "OK"), true)
-    });
+    using B = muse::IInteractive::Button;
+    muse::IInteractive::ButtonDatas buttons;
+    if (r.valid) {
+        buttons.push_back(muse::IInteractive::ButtonData(int(B::Apply), muse::trc("record", "Use as project key"), true));
+        buttons.push_back(muse::IInteractive::ButtonData(int(B::Close), muse::trc("record", "Close")));
+    } else {
+        buttons.push_back(muse::IInteractive::ButtonData(int(B::Ok), muse::trc("record", "OK"), true));
+    }
+    const auto result = interactive()->infoSync(muse::trc("record", "Detect key"), muse::IInteractive::Text(body), buttons,
+                                                r.valid ? int(B::Apply) : int(B::Ok));
+    if (r.valid && result.isButton(B::Apply)) {
+        return record()->setProjectKey(ProjectKeyInfo { r.tonic, r.minor, r.tuningCents });
+    }
     return make_ok();
 }
 

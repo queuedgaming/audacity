@@ -57,6 +57,11 @@ public:
     bool canSwitchTake(trackedit::TrackId trackId, TakeSwitch kind) const override;
     muse::Ret switchTake(trackedit::TrackId trackId, TakeSwitch kind) override;
     KeyDetection detectKey(trackedit::TrackId trackId, double t0, double t1, bool store) override;
+    std::optional<ProjectKeyInfo> projectKey() const override;
+    muse::Ret setProjectKey(const std::optional<ProjectKeyInfo>& key) override;
+    muse::async::Notification projectKeyChanged() const override;
+    std::string projectKeyLabel(const std::optional<ProjectKeyInfo>& key) const override;
+    std::string lastAutoCompKey() const override { return m_lastAutoCompKey; }
 
     //! Stop time for lead-in recording: selection end when punch-out applies, else DBL_MAX
     double punchOutTime(double punchInTime) const;
@@ -109,5 +114,6 @@ private:
     muse::async::Notification m_recordingFinished;
 
     context::IPlaybackStatePtr playbackState() const;
+    std::string m_lastAutoCompKey;
 };
 }

@@ -132,6 +132,14 @@ const UiActionList RecordUiActions::m_mainActions = {
              //: Action description: shown as a tooltip; can be a full sentence
              TranslatableString("action_description", "Pick the cleanest take for each phrase of the focused track")
              ),
+    UiAction("action://record/project-key",
+             au::context::UiCtxProjectOpened,
+             au::context::CTX_PROJECT_FOCUSED,
+             //: Action title: shown as a menu item or a button label; keep it short
+             TranslatableString("action", "Project key"),
+             //: Action description: shown as a tooltip; can be a full sentence
+             TranslatableString("action_description", "Show and edit the project key and tuning")
+             ),
     UiAction(RECORD_DETECT_KEY_QUERY.toString(),
              au::context::UiCtxProjectOpened,
              au::context::CTX_PROJECT_FOCUSED,

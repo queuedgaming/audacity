@@ -464,6 +464,7 @@ const ToolConfig& ProjectSceneUiActions::defaultPlaybackToolBarConfig()
             { "playback-time", true },
             { "playback-bpm", false },
             { "playback-time-signature", false },
+            { "action://record/project-key", true },
             { "", true },
             { "snap", true },
             { "", true },

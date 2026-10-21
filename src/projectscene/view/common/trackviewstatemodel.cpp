@@ -101,6 +101,13 @@ void TrackViewStateModel::init()
             emit takeLanesChanged();
         }, muse::async::Asyncable::Mode::SetReplace);
 
+        if (record() && globalContext()->currentProject()) {
+            record()->projectKeyChanged().onNotify(this, [this]() {
+                emit autoCompKeyNoteChanged();
+            }, muse::async::Asyncable::Mode::SetReplace);
+        }
+        emit autoCompKeyNoteChanged();
+
         emit takeLanesChanged();
         emit trackHeightChanged();
         emit isTrackCollapsedChanged();
@@ -275,4 +282,17 @@ void TrackViewStateModel::autoComp()
         && record()->canSwitchTake(m_trackId, record::TakeSwitch::AutoComp)) {
         record()->switchTake(m_trackId, record::TakeSwitch::AutoComp);
     }
+}
+
+QString TrackViewStateModel::autoCompKeyNote() const
+{
+    if (!record() || !globalContext()->currentProject()) {
+        return {};
+    }
+    const auto key = record()->projectKey();
+    if (key) {
+        return muse::qtrc("projectscene", "Intonation is scored against the project key %1.")
+               .arg(QString::fromStdString(record()->projectKeyLabel(key)));
+    }
+    return muse::qtrc("projectscene", "No project key: the key is detected from the takes (chromatic if unclear).");
 }

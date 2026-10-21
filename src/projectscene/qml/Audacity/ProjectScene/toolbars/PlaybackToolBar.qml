@@ -78,6 +78,8 @@ Item {
                 return projectControlComp
             case PlaybackToolBarModel.SNAP:
                 return snapComp
+            case PlaybackToolBarModel.PROJECT_KEY:
+                return projectKeyComp
             }
 
             return null
@@ -243,6 +245,12 @@ Item {
                     itemData.lower = newValue
                 }
             }
+        }
+
+        Component {
+            id: projectKeyComp
+
+            ProjectKey {}
         }
 
         Component {

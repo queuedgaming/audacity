@@ -236,7 +236,7 @@ ListItemBlank {
                     Layout.preferredHeight: 20
                     text: qsTrc("projectscene", "Auto")
                     toolTipTitle: qsTrc("projectscene", "Auto-comp takes")
-                    toolTipDescription: qsTrc("projectscene", "Pick the cleanest take for each phrase (less clipping, noise and dropouts)")
+                    toolTipDescription: qsTrc("projectscene", "Pick the cleanest take for each phrase (less clipping, noise and dropouts)") + "\n" + trackViewState.autoCompKeyNote
                     navigation.panel: root.headerNavigationPanel
                     navigation.name: "AutoCompButton"
                     navigation.order: title.navigation.order + 1

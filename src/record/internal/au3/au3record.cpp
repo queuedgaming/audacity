@@ -1050,6 +1050,7 @@ muse::Ret Au3Record::switchTake(trackedit::TrackId trackId, TakeSwitch kind)
     Au3WaveTrack* main = TakeLaneInfo::Get(*track).isTake() ? mainOf(project, *track) : track;
 
     bool done = false;
+    std::string keySummary;
     switch (kind) {
     case TakeSwitch::Activate:
         done = activateTake(project, *main, *track);
@@ -1063,7 +1064,7 @@ muse::Ret Au3Record::switchTake(trackedit::TrackId trackId, TakeSwitch kind)
     case TakeSwitch::AutoComp:
         done = !autoComp(project, *main, recordConfiguration()->autoCompSegmentLength(),
                          std::max(0.0, recordConfiguration()->crossfadeDuration() / 1000.0),
-                         recordConfiguration()->autoCompPitchScoring()).empty();
+                         recordConfiguration()->autoCompPitchScoring(), &keySummary).empty();
         break;
     case TakeSwitch::Next:
     case TakeSwitch::Previous:
@@ -1082,7 +1083,8 @@ muse::Ret Au3Record::switchTake(trackedit::TrackId trackId, TakeSwitch kind)
     }
 
     if (kind == TakeSwitch::AutoComp) {
-        projectHistory()->pushHistoryState(trc("record", "Auto-comped takes"),
+        m_lastAutoCompKey = keySummary;
+        projectHistory()->pushHistoryState(muse::qtrc("record", "Auto-comped takes (intonation: %1)").arg(QString::fromStdString(keySummary)).toStdString(),
                                            /*: Undo history entry name; shown after Undo and Redo in the Edit menu */
                                            trc("record", "Auto-comp takes"));
     } else if (kind == TakeSwitch::CompSelection) {
@@ -1123,10 +1125,57 @@ KeyDetection Au3Record::detectKey(trackedit::TrackId trackId, double t0, double 
         out.alternatives.emplace_back(keydetect::pitchClassName(a.tonic) + (a.minor ? " minor" : " major"), a.correlation);
     }
     if (store) {
-        ProjectKey::Get(project).setKey(ProjectKey::Key { r.key.tonic, r.key.minor, r.tuningCents, r.confidence });
-        projectHistory()->markUnsaved();
+        setProjectKey(ProjectKeyInfo { r.key.tonic, r.key.minor, r.tuningCents });
     }
     return out;
+}
+
+std::optional<ProjectKeyInfo> Au3Record::projectKey() const
+{
+    const auto& k = ProjectKey::Get(projectRef()).key();
+    if (!k) {
+        return std::nullopt;
+    }
+    return ProjectKeyInfo { k->tonic, k->minor, k->tuningCents };
+}
+
+muse::Ret Au3Record::setProjectKey(const std::optional<ProjectKeyInfo>& key)
+{
+    if (key && (key->tonic < 0 || key->tonic > 11 || std::fabs(key->tuningCents) > 100.0)) {
+        return make_ret(Ret::Code::InternalError);
+    }
+    if (projectKey() == key) {
+        return make_ok();
+    }
+    std::optional<ProjectKey::Key> k;
+    if (key) {
+        k = ProjectKey::Key { key->tonic, key->minor, key->tuningCents, 1.0 };
+    }
+    ProjectKey::Get(projectRef()).setKey(k);
+    if (key) {
+        const std::string label = ProjectKey::shortLabel(k);
+        projectHistory()->pushHistoryState(muse::qtrc("record", "Set project key to %1").arg(QString::fromStdString(label)).toStdString(),
+                                           /*: Undo history entry name; shown after Undo and Redo in the Edit menu */
+                                           trc("record", "Set project key"));
+    } else {
+        projectHistory()->pushHistoryState(trc("record", "Cleared project key"),
+                                           /*: Undo history entry name; shown after Undo and Redo in the Edit menu */
+                                           trc("record", "Clear project key"));
+    }
+    return make_ok();
+}
+
+muse::async::Notification Au3Record::projectKeyChanged() const
+{
+    return ProjectKey::Get(projectRef()).keyChanged();
+}
+
+std::string Au3Record::projectKeyLabel(const std::optional<ProjectKeyInfo>& key) const
+{
+    if (!key) {
+        return trc("record", "No key");
+    }
+    return ProjectKey::shortLabel(ProjectKey::Key { key->tonic, key->minor, key->tuningCents, 1.0 });
 }
 
 void Au3Record::cancelRecording()

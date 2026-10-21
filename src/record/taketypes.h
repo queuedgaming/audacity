@@ -17,6 +17,14 @@ enum class TakeSwitch {
     AutoComp,  //!< pick the best take per segment automatically (see au3wrap/internal/autocomp.h)
 };
 
+//! Project-level musical key (see au3wrap/internal/projectkey.h)
+struct ProjectKeyInfo {
+    int tonic = 0;            //!< pitch class, 0 = C
+    bool minor = false;
+    double tuningCents = 0.0; //!< offset from A4 = 440 Hz
+    bool operator==(const ProjectKeyInfo&) const = default;
+};
+
 //! Result of "Detect key" (see au3wrap/internal/keydetect.h)
 struct KeyDetection {
     bool valid = false;

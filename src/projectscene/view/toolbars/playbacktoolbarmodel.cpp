@@ -11,6 +11,7 @@
 #include "playback/view/toolbars/playbacktoolbarcontrolitem.h"
 #include "playback/view/toolbars/playbacktoolbartimeitem.h"
 #include "playback/view/toolbars/playbacktoolbarbpmitem.h"
+#include "record/qml/Audacity/Record/playbacktoolbarprojectkeyitem.h"
 #include "playback/view/toolbars/playbacktoolbartimesignatureitem.h"
 #include "record/qml/Audacity/Record/playbacktoolbarrecordlevelitem.h"
 #include "projectscene/view/toolbars/snaptoolbaritem.h"
@@ -44,6 +45,7 @@ static const ActionQuery PLAYBACK_LEVEL_QUERY("action://playback/level");
 static const ActionCode PLAYBACK_TIME("playback-time");
 static const ActionCode PLAYBACK_BPM("playback-bpm");
 static const ActionCode PLAYBACK_TIME_SIGNATURE("playback-time-signature");
+static const ActionCode PROJECT_KEY_ACTION_CODE("action://record/project-key");
 
 static const ActionCode SNAP_ACTION_CODE("snap");
 
@@ -54,6 +56,7 @@ static PlaybackToolBarModel::ItemType itemType(const ActionCode& actionCode)
         { PLAYBACK_TIME, PlaybackToolBarModel::PLAYBACK_TIME },
         { PLAYBACK_BPM, PlaybackToolBarModel::PLAYBACK_BPM },
         { PLAYBACK_TIME_SIGNATURE, PlaybackToolBarModel::PLAYBACK_TIME_SIGNATURE },
+        { PROJECT_KEY_ACTION_CODE, PlaybackToolBarModel::PROJECT_KEY },
         { RECORD_LEVEL_QUERY.toString(), PlaybackToolBarModel::RECORD_LEVEL },
         { PLAYBACK_TOGGLE_PLAY_PAUSE_QUERY.toString(), PlaybackToolBarModel::PLAYBACK_CONTROL },
         { PLAYBACK_STOP_QUERY.toString(), PlaybackToolBarModel::PLAYBACK_CONTROL },
@@ -365,6 +368,9 @@ ToolBarItem* PlaybackToolBarModel::makeLocalItem(const ActionCode& actionCode)
         break;
     case PlaybackToolBarModel::PLAYBACK_TIME_SIGNATURE:
         result = new PlaybackToolBarTimeSignatureItem(action, static_cast<ToolBarItemType::Type>(type), this);
+        break;
+    case PlaybackToolBarModel::PROJECT_KEY:
+        result = new record::PlaybackToolBarProjectKeyItem(action, static_cast<ToolBarItemType::Type>(type), this);
         break;
     case PlaybackToolBarModel::RECORD_LEVEL:
         result = new record::PlaybackToolBarRecordLevelItem(action, static_cast<ToolBarItemType::Type>(type), this);

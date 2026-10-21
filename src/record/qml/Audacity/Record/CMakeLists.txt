@@ -10,9 +10,13 @@ qt_add_qml_module(record_qml
         leadinrecordingindicatormodel.h
         playbacktoolbarrecordlevelitem.cpp
         playbacktoolbarrecordlevelitem.h
+        playbacktoolbarprojectkeyitem.cpp
+        playbacktoolbarprojectkeyitem.h
     QML_FILES
         RecordLevel.qml
         internal/RecordLevelPopup.qml
+        ProjectKey.qml
+        internal/ProjectKeyPopup.qml
     IMPORTS
         TARGET muse_ui_qml
         TARGET muse_uicomponents_qml

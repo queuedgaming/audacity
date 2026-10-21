@@ -28,5 +28,10 @@ public:
     MOCK_METHOD(bool, canSwitchTake, (trackedit::TrackId, TakeSwitch), (const, override));
     MOCK_METHOD(muse::Ret, switchTake, (trackedit::TrackId, TakeSwitch), (override));
     MOCK_METHOD(KeyDetection, detectKey, (trackedit::TrackId, double, double, bool), (override));
+    MOCK_METHOD(std::optional<ProjectKeyInfo>, projectKey, (), (const, override));
+    MOCK_METHOD(muse::Ret, setProjectKey, (const std::optional<ProjectKeyInfo>&), (override));
+    MOCK_METHOD(muse::async::Notification, projectKeyChanged, (), (const, override));
+    MOCK_METHOD(std::string, projectKeyLabel, (const std::optional<ProjectKeyInfo>&), (const, override));
+    MOCK_METHOD(std::string, lastAutoCompKey, (), (const, override));
 };
 }

@@ -36,6 +36,7 @@ class TrackViewStateModel : public QObject, public muse::Contextable, public mus
     Q_PROPERTY(QString takeLabel READ takeLabel NOTIFY takeLanesChanged FINAL)
     Q_PROPERTY(bool takeLanesExpanded READ takeLanesExpanded NOTIFY takeLanesChanged FINAL)
     Q_PROPERTY(bool isHiddenLane READ isHiddenLane NOTIFY takeLanesChanged FINAL)
+    Q_PROPERTY(QString autoCompKeyNote READ autoCompKeyNote NOTIFY autoCompKeyNoteChanged FINAL)
 
     Q_PROPERTY(bool isPlaying READ isPlaying NOTIFY isPlayingChanged FINAL)
     Q_PROPERTY(bool isRecording READ isRecording NOTIFY isRecordingChanged FINAL)
@@ -83,6 +84,7 @@ public:
     Q_INVOKABLE void compSelection();
     //! Automatic comping of this main track's takes
     Q_INVOKABLE void autoComp();
+    QString autoCompKeyNote() const;
 
     bool isPlaying() const;
     bool isRecording() const;
@@ -98,6 +100,7 @@ signals:
     void displayBoundsChanged();
     void isLinearChanged();
     void takeLanesChanged();
+    void autoCompKeyNoteChanged();
 
 private:
     IProjectViewStatePtr viewState() const;
