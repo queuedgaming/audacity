@@ -983,6 +983,25 @@ Rectangle {
                 border.color: Qt.rgba(0, 0, 0, 0.6)
                 border.width: 1
 
+                Rectangle {
+                    //! Length readout shown next to the handle while dragging
+                    visible: handleArea.pressed && dragReadout.text !== ""
+                    x: fadeHandle.isIn ? fadeHandle.size + 4 : -width - 4
+                    y: -2
+                    width: dragReadout.implicitWidth + 10
+                    height: dragReadout.implicitHeight + 4
+                    radius: 3
+                    color: Qt.rgba(0, 0, 0, 0.78)
+
+                    Text {
+                        id: dragReadout
+                        anchors.centerIn: parent
+                        color: "#ffffff"
+                        font.pixelSize: 11
+                        text: ""
+                    }
+                }
+
                 MouseArea {
                     id: handleArea
 
@@ -1004,6 +1023,9 @@ Rectangle {
                         root.previewFadeIn = root.fadeIn
                         root.previewFadeOut = root.fadeOut
                         root.previewFadeCurve = root.fadeCurve
+                        dragReadout.text = singleClipContextMenuModel.fadeDragReadout(fadeHandle.isIn,
+                                                                                      fadeHandle.isIn ? root.fadeIn : root.fadeOut,
+                                                                                      root.fadeCurve, false)
                         e.accepted = true
                     }
 
@@ -1012,13 +1034,34 @@ Rectangle {
                             return
                         }
                         const dxSec = (mapToItem(root, e.x, e.y).x - pressX) / fadeOverlay.pxPerSec
-                        const f = singleClipContextMenuModel.fadeDragPreview(fadeHandle.isIn, startIn, startOut, dxSec)
+                        let f = singleClipContextMenuModel.fadeDragPreview(fadeHandle.isIn, startIn, startOut, dxSec)
+                        // Snap the fade edge to the grid when project snap is on; Ctrl (Cmd on macOS) bypasses
+                        if (root.context && !(e.modifiers & Qt.ControlModifier)) {
+                            const edge = fadeHandle.isIn ? waveView.startTime + f.x : waveView.endTime - f.y
+                            const snapped = root.context.applySnapToTime(edge)
+                            if (snapped !== edge) {
+                                f = singleClipContextMenuModel.fadeDragSnap(fadeHandle.isIn, f.x, f.y, snapped)
+                            }
+                        }
                         root.previewFadeIn = f.x
                         root.previewFadeOut = f.y
                         root.previewFadeCurve = (e.modifiers & Qt.ShiftModifier) ? (root.fadeCurve === 1 ? 0 : 1) : root.fadeCurve
+                        dragReadout.text = singleClipContextMenuModel.fadeDragReadout(fadeHandle.isIn,
+                                                                                      fadeHandle.isIn ? f.x : f.y,
+                                                                                      root.previewFadeCurve,
+                                                                                      (e.modifiers & Qt.ShiftModifier) !== 0)
+                        e.accepted = true
                     }
 
+                    // Fully consume the gesture so the clip/track below never sees it
+                    // (no playhead seek, no selection change)
+                    onClicked: function (e) { e.accepted = true }
+                    onDoubleClicked: function (e) { e.accepted = true }
+                    onPressAndHold: function (e) { e.accepted = true }
+
                     onReleased: function (e) {
+                        e.accepted = true
+                        dragReadout.text = ""
                         const toggle = (e.modifiers & Qt.ShiftModifier) !== 0
                         const fin = root.previewFadeIn, fout = root.previewFadeOut
                         root.previewFadeIn = -1
@@ -1028,6 +1071,7 @@ Rectangle {
                     }
 
                     onCanceled: {
+                        dragReadout.text = ""
                         root.previewFadeIn = -1
                         root.previewFadeOut = -1
                         root.previewFadeCurve = -1

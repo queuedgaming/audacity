@@ -32,6 +32,9 @@ public:
     //! Fade handle dragging: live preview (no undo step) and the final value (one undo step).
     //! Returns QPointF(fadeIn, fadeOut) in seconds, clamped to the clip.
     Q_INVOKABLE QPointF fadeDragPreview(bool fadeInHandle, double startIn, double startOut, double dxSec) const;
+    //! Snap the dragged edge to `snappedEdge` (project seconds); returns QPointF(fadeIn, fadeOut)
+    Q_INVOKABLE QPointF fadeDragSnap(bool fadeInHandle, double fadeIn, double fadeOut, double snappedEdge) const;
+    Q_INVOKABLE QString fadeDragReadout(bool fadeInHandle, double seconds, int curve, bool showCurve) const;
     Q_INVOKABLE void applyFadeDrag(double fadeIn, double fadeOut, int startCurve, bool toggleCurve);
 
     ClipKey clipKey() const;

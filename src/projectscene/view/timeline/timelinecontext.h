@@ -147,7 +147,8 @@ public:
     Q_INVOKABLE double timeToPosition(double time) const;
     Q_INVOKABLE double positionToTime(double position, bool withSnap = false) const;
     double singleStepToTime(double position, Direction direction, const Snap& snap) const;
-    double applySnapToTime(double time) const;
+    //! Grid snap when the project snap is enabled; `time` unchanged otherwise
+    Q_INVOKABLE double applySnapToTime(double time) const;
     double applySnapToItem(double time) const;
     Q_INVOKABLE double applyDetectedSnap(double time) const;
 

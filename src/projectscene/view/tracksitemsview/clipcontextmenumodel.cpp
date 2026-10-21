@@ -383,3 +383,18 @@ void ClipContextMenuModel::applyFadeDrag(double fadeIn, double fadeOut, int star
 {
     record()->setClipFades(m_clipKey.key, fadeIn, fadeOut, fadehandles::curveAfterDrag(startCurve, toggleCurve));
 }
+
+QPointF ClipContextMenuModel::fadeDragSnap(bool fadeInHandle, double fadeIn, double fadeOut, double snappedEdge) const
+{
+    trackedit::Clip clip;
+    if (auto prj = globalContext()->currentTrackeditProject()) {
+        clip = prj->clip(m_clipKey.key);
+    }
+    const auto f = fadehandles::snapEdge({ fadeIn, fadeOut }, clip.startTime, clip.endTime, fadeInHandle, snappedEdge);
+    return QPointF(f.in, f.out);
+}
+
+QString ClipContextMenuModel::fadeDragReadout(bool fadeInHandle, double seconds, int curve, bool showCurve) const
+{
+    return QString::fromStdString(fadehandles::readout(fadeInHandle, seconds, curve, showCurve));
+}
