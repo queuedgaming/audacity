@@ -215,7 +215,7 @@ size_t NoiseSuppressionEffect::Instance::SetBlockSize(size_t maxBlockSize)
 ::EffectInstance::SampleCount NoiseSuppressionEffect::Instance::GetLatency(const EffectSettings&, double sampleRate) const
 {
     // Only the realtime path has latency; destructive processing compensates internally
-    return m_processors.empty() ? 0 : denoise::StreamSuppressor::latencyFor(sampleRate);
+    return (m_processors.empty() && !m_block) ? 0 : denoise::StreamSuppressor::latencyFor(sampleRate);
 }
 
 bool NoiseSuppressionEffect::Instance::RealtimeInitialize(EffectSettings&, double, size_t)
@@ -260,7 +260,7 @@ size_t BreathRemovalEffect::Instance::SetBlockSize(size_t maxBlockSize)
 
 ::EffectInstance::SampleCount BreathRemovalEffect::Instance::GetLatency(const EffectSettings&, double sampleRate) const
 {
-    return m_processors.empty() ? 0 : denoise::StreamBreathGate::latencyFor(sampleRate);
+    return (m_processors.empty() && !m_block) ? 0 : denoise::StreamBreathGate::latencyFor(sampleRate);
 }
 
 bool BreathRemovalEffect::Instance::RealtimeInitialize(EffectSettings&, double, size_t)
@@ -293,5 +293,53 @@ bool BreathRemovalEffect::Instance::RealtimeFinalize(EffectSettings&) noexcept
 {
     m_processors.clear();
     return true;
+}
+
+bool NoiseSuppressionEffect::Instance::ProcessInitialize(EffectSettings& settings, double sampleRate,
+                                                         ChannelNames chanMap)
+{
+    m_block = std::make_unique<denoise::StreamSuppressor>(sampleRate);
+    return StatefulEffect::Instance::ProcessInitialize(settings, sampleRate, chanMap);
+}
+
+size_t NoiseSuppressionEffect::Instance::ProcessBlock(EffectSettings& settings, const float* const* inBlock,
+                                                      float* const* outBlock, size_t blockLen)
+{
+    if (!m_block) {
+        return 0;
+    }
+    m_block->process(inBlock[0], outBlock[0], blockLen, NoiseSuppressionEffect::GetSettings(settings).mMixPercent / 100.0);
+    return blockLen;
+}
+
+bool NoiseSuppressionEffect::Instance::ProcessFinalize() noexcept
+{
+    m_block.reset();
+    return StatefulEffect::Instance::ProcessFinalize();
+}
+
+bool BreathRemovalEffect::Instance::ProcessInitialize(EffectSettings& settings, double sampleRate,
+                                                      ChannelNames chanMap)
+{
+    // a mono source gets a zero-filled dummy second input from the mixer: detect on channel 0 only
+    m_blockChannels = (chanMap && chanMap[0] != ChannelNameEOL && chanMap[1] == ChannelNameEOL) ? 1 : 2;
+    m_block = std::make_unique<denoise::StreamBreathGate>(sampleRate, m_blockChannels);
+    return StatefulEffect::Instance::ProcessInitialize(settings, sampleRate, chanMap);
+}
+
+size_t BreathRemovalEffect::Instance::ProcessBlock(EffectSettings& settings, const float* const* inBlock,
+                                                   float* const* outBlock, size_t blockLen)
+{
+    if (!m_block) {
+        return 0;
+    }
+    m_block->process(inBlock, outBlock, blockLen, BreathRemovalEffect::GetSettings(settings).toCore());
+    return blockLen;
+}
+
+bool BreathRemovalEffect::Instance::ProcessFinalize() noexcept
+{
+    m_block.reset();
+    return StatefulEffect::Instance::ProcessFinalize();
 }
 }

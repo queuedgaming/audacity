@@ -81,10 +81,16 @@ public:
                                size_t numSamples) override;
         bool RealtimeProcessEnd(EffectSettings&) noexcept override { return true; }
         bool RealtimeFinalize(EffectSettings& settings) noexcept override;
+        // Block processing: used when the realtime stack is rendered by the mixer (export, mixdown)
+        bool ProcessInitialize(EffectSettings& settings, double sampleRate, ChannelNames chanMap) override;
+        size_t ProcessBlock(EffectSettings& settings, const float* const* inBlock, float* const* outBlock,
+                            size_t blockLen) override;
+        bool ProcessFinalize() noexcept override;
 
     private:
         size_t m_blockSize = 512;
         std::vector<std::unique_ptr<denoise::StreamSuppressor> > m_processors;
+        std::unique_ptr<denoise::StreamSuppressor> m_block;
     };
 };
 
@@ -137,10 +143,17 @@ public:
                                size_t numSamples) override;
         bool RealtimeProcessEnd(EffectSettings&) noexcept override { return true; }
         bool RealtimeFinalize(EffectSettings& settings) noexcept override;
+        // Block processing: used when the realtime stack is rendered by the mixer (export, mixdown)
+        bool ProcessInitialize(EffectSettings& settings, double sampleRate, ChannelNames chanMap) override;
+        size_t ProcessBlock(EffectSettings& settings, const float* const* inBlock, float* const* outBlock,
+                            size_t blockLen) override;
+        bool ProcessFinalize() noexcept override;
 
     private:
         size_t m_blockSize = 512;
         std::vector<std::unique_ptr<denoise::StreamBreathGate> > m_processors;
+        std::unique_ptr<denoise::StreamBreathGate> m_block;
+        unsigned m_blockChannels = 2;
     };
 };
 }
