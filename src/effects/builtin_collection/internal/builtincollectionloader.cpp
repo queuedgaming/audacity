@@ -23,6 +23,8 @@
 #include "autoduck/autoduckviewmodel.h"
 #include "loudness/normalizeloudnesseffect.h"
 #include "loudness/normalizeloudnessviewmodel.h"
+#include "denoise/denoiseeffects.h"
+#include "denoise/denoiseviewmodels.h"
 #include "clickremoval/clickremovaleffect.h"
 #include "clickremoval/clickremovalviewmodel.h"
 #include "dynamics/timeline/meters/compressiondbmetermodel.h"
@@ -96,6 +98,8 @@ void BuiltinCollectionLoader::preInit()
     static BuiltinEffectsModule::Registration< GraphicEq > regGraphicEq;
     static BuiltinEffectsModule::Registration< FilterCurveEq > regFilterCurveEq;
     static BuiltinEffectsModule::Registration< ClickRemovalEffect > regClickRemoval;
+    static BuiltinEffectsModule::Registration< NoiseSuppressionEffect > regNoiseSuppression;
+    static BuiltinEffectsModule::Registration< BreathRemovalEffect > regBreathRemoval;
     static BuiltinEffectsModule::Registration< NormalizeEffect > regNormalize;
     static BuiltinEffectsModule::Registration< RemoveDCOffsetEffect > regRemoveDCOffset;
     static BuiltinEffectsModule::Registration< ChirpEffect > regChirp;
@@ -138,6 +142,12 @@ void BuiltinCollectionLoader::init()
 
     REGISTER_AUDACITY_EFFECTS_SINGLETON_TYPE(ClickRemovalViewModelFactory);
     regView(ClickRemovalEffect::Symbol, u"qrc:/clickremoval/ClickRemovalView.qml");
+
+    REGISTER_AUDACITY_EFFECTS_SINGLETON_TYPE(NoiseSuppressionViewModelFactory);
+    regView(NoiseSuppressionEffect::Symbol, u"qrc:/denoise/NoiseSuppressionView.qml");
+
+    REGISTER_AUDACITY_EFFECTS_SINGLETON_TYPE(BreathRemovalViewModelFactory);
+    regView(BreathRemovalEffect::Symbol, u"qrc:/denoise/BreathRemovalView.qml");
 
     REGISTER_AUDACITY_EFFECTS_SINGLETON_TYPE(CompressorViewModelFactory);
     REGISTER_AUDACITY_EFFECTS_SINGLETON_TYPE(CompressorSettingModelFactory);

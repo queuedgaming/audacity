@@ -46,6 +46,12 @@ set(MODULE_SRC
     ${CMAKE_CURRENT_LIST_DIR}/loudness/normalizeloudnessviewmodel.cpp
     ${CMAKE_CURRENT_LIST_DIR}/loudness/normalizeloudnessviewmodel.h
 
+    ${CMAKE_CURRENT_LIST_DIR}/denoise/denoisecore.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/denoise/denoisecore.h
+    ${CMAKE_CURRENT_LIST_DIR}/denoise/denoiseeffects.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/denoise/denoiseeffects.h
+    ${CMAKE_CURRENT_LIST_DIR}/denoise/denoiseviewmodels.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/denoise/denoiseviewmodels.h
     ${CMAKE_CURRENT_LIST_DIR}/clickremoval/clickremovaleffect.cpp
     ${CMAKE_CURRENT_LIST_DIR}/clickremoval/clickremovaleffect.h
     ${CMAKE_CURRENT_LIST_DIR}/clickremoval/clickremovalviewmodel.cpp
@@ -187,7 +193,13 @@ set(MODULE_SRC
     )
 
 # Note: NOTE_TRACK_API would only be needed with USE_MIDI, which AU4 does not enable.
+# RNNoise (BSD-3-Clause) for the noise suppression and breath removal effects
+if (NOT TARGET rnnoise)
+    add_subdirectory(${CMAKE_SOURCE_DIR}/thirdparty/rnnoise rnnoise)
+endif()
+
 set(MODULE_LINK
+        rnnoise
         au3wrap
         au3-basic-ui
         au3-command-parameters
@@ -212,3 +224,7 @@ set(MODULE_LINK_PUBLIC au3-effects au3-builtin-effects)
 set(MODULE_USE_UNITY OFF)
 
 setup_module()
+
+if (AU_BUILD_EFFECTS_TESTS)
+    add_subdirectory(denoise/tests)
+endif()
