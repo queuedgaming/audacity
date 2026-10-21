@@ -9,5 +9,6 @@ enum class TakeSwitch {
     Next,      //!< rotate lanes: the main track plays take 1, take 1 gets take 2, ...
     Previous,  //!< inverse rotation
     Activate,  //!< swap the focused take lane with its main track
+    CompSelection, //!< make the selected time range of the focused take lane active on its main track
 };
 }

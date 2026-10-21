@@ -1,6 +1,8 @@
 /*
  * Audacity: A Digital Audio Editor
  */
+#include "au3-project-history/ProjectHistory.h"
+#include "au3-project-history/UndoManager.h"
 #include <cfloat>
 
 #include <gtest/gtest.h>
@@ -25,6 +27,7 @@
 #include "mocks/recordconfigurationmock.h"
 
 #include "au3wrap/internal/au3project.h"
+#include "au3wrap/internal/domaccessor.h"
 #include "au3wrap/au3types.h"
 
 #include "au3-track/PendingTracks.h"
@@ -535,5 +538,127 @@ TEST_F(Au3RecordTests, SwitchTakeIsUndoableAndChecksTheTarget)
 
     //! [AND] An invalid request does nothing
     EXPECT_FALSE(m_record->switchTake(plain->GetId(), TakeSwitch::Next));
+}
+
+TEST_F(Au3RecordTests, CompRangeSwapsOnlyTheRangeLosslesslyWithCrossfades)
+{
+    //! [GIVEN] Main track of 1.0, a take of 2.0 on [2s, 5s]
+    Au3WaveTrack* main = addFilledTrack(0.0, 10.0, 1.0f);
+    auto snapshot = takelanes::snapshotFrom(*main, 2.0);
+    Au3WaveTrack* take = takelanes::preserveAsTake(projectRef(), *main, *snapshot, 2.0, 5.0);
+    ASSERT_NE(take, nullptr);
+    fillRegion(*take, *addFilledTrack(0.0, 3.0, 2.0f));
+
+    //! [WHEN] [3s, 4s] of the take is comped with a 10 ms crossfade
+    ASSERT_TRUE(takelanes::compRange(projectRef(), *main, *take, 3.0, 4.0, 0.010));
+
+    //! [THEN] Only the range is replaced on the main track
+    EXPECT_FLOAT_EQ(sampleAt(*main, 2.5), 1.0f);
+    EXPECT_FLOAT_EQ(sampleAt(*main, 3.5), 2.0f);
+    EXPECT_FLOAT_EQ(sampleAt(*main, 4.5), 1.0f);
+    EXPECT_FLOAT_EQ(sampleAt(*main, 7.0), 1.0f);
+    //! [AND] The take keeps the replaced main audio, bit-exact, and its own audio elsewhere
+    EXPECT_FLOAT_EQ(sampleAt(*take, 2.5), 2.0f);
+    EXPECT_FLOAT_EQ(sampleAt(*take, 3.0), 1.0f);
+    EXPECT_FLOAT_EQ(sampleAt(*take, 3.5), 1.0f);
+    EXPECT_FLOAT_EQ(sampleAt(*take, 3.9999), 1.0f);
+    EXPECT_FLOAT_EQ(sampleAt(*take, 4.5), 2.0f);
+
+    //! [AND] Linear crossfades of 441 samples at both boundaries
+    const auto s0 = main->TimeToLongSamples(3.0);
+    const auto s1 = main->TimeToLongSamples(4.0);
+    auto at = [&](sampleCount s) { return sampleAt(*main, main->LongSamplesToTime(s)); };
+    EXPECT_NEAR(at(s0), 1.0f, 0.01f);              // starts on the old audio
+    EXPECT_NEAR(at(s0 + 220), 1.5f, 0.01f);        // halfway
+    EXPECT_FLOAT_EQ(at(s0 + 441), 2.0f);           // fully the take after the fade
+    EXPECT_NEAR(at(s1 - 1), 1.0f, 0.01f);          // back to the old audio at the end
+    EXPECT_NEAR(at(s1 - 221), 1.5f, 0.01f);
+    EXPECT_FLOAT_EQ(at(s1 - 442), 2.0f);
+
+    //! [AND] The comped region is a clip named after its take
+    int named = 0;
+    for (const auto& clip : main->Intervals()) {
+        if (clip->GetName() == wxString("Take 1")) {
+            ++named;
+            EXPECT_NEAR(clip->GetPlayStartTime(), 3.0, 1e-6);
+            EXPECT_NEAR(clip->GetPlayEndTime(), 4.0, 1e-6);
+        }
+    }
+    EXPECT_EQ(named, 1);
+
+    //! [WHEN] The same range is comped back from the take
+    ASSERT_TRUE(takelanes::compRange(projectRef(), *main, *take, 3.0, 4.0, 0.0));
+    //! [THEN] The main track is restored exactly
+    for (double t : { 2.5, 3.0, 3.001, 3.5, 3.999, 4.5 }) {
+        EXPECT_FLOAT_EQ(sampleAt(*main, t), 1.0f) << t;
+    }
+
+    //! [AND] Invalid requests are refused
+    EXPECT_FALSE(takelanes::compRange(projectRef(), *main, *take, 4.0, 4.0, 0.01));
+    EXPECT_FALSE(takelanes::compRange(projectRef(), *main, *main, 3.0, 4.0, 0.01));
+}
+
+TEST_F(Au3RecordTests, CompRangeCrossfadeIsAtMostHalfTheRange)
+{
+    Au3WaveTrack* main = addFilledTrack(0.0, 10.0, 1.0f);
+    auto snapshot = takelanes::snapshotFrom(*main, 2.0);
+    Au3WaveTrack* take = takelanes::preserveAsTake(projectRef(), *main, *snapshot, 2.0, 5.0);
+    fillRegion(*take, *addFilledTrack(0.0, 3.0, 2.0f));
+    // 2 ms range, 10 ms crossfade: the fades meet in the middle and never overshoot
+    ASSERT_TRUE(takelanes::compRange(projectRef(), *main, *take, 3.0, 3.002, 0.010));
+    for (double t = 2.999; t < 3.003; t += 0.0001) {
+        const float v = sampleAt(*main, t);
+        EXPECT_GE(v, 1.0f - 1e-6f) << t;
+        EXPECT_LE(v, 2.0f + 1e-6f) << t;
+    }
+    EXPECT_FLOAT_EQ(sampleAt(*main, 3.003), 1.0f);
+}
+
+TEST_F(Au3RecordTests, CompSelectionIsOneUndoStepAndSavedWithTheProject)
+{
+    Au3WaveTrack* main = addFilledTrack(0.0, 10.0, 1.0f);
+    auto snapshot = takelanes::snapshotFrom(*main, 2.0);
+    Au3WaveTrack* take = takelanes::preserveAsTake(projectRef(), *main, *snapshot, 2.0, 5.0);
+    fillRegion(*take, *addFilledTrack(0.0, 3.0, 2.0f));
+
+    //! [GIVEN] No time selection: nothing to comp
+    ON_CALL(*m_selectionController, dataSelectedStartTime()).WillByDefault(Return(0.0));
+    ON_CALL(*m_selectionController, dataSelectedEndTime()).WillByDefault(Return(0.0));
+    EXPECT_FALSE(m_record->canSwitchTake(take->GetId(), TakeSwitch::CompSelection));
+
+    //! [GIVEN] [3s, 4s] selected
+    ON_CALL(*m_selectionController, dataSelectedStartTime()).WillByDefault(Return(3.0));
+    ON_CALL(*m_selectionController, dataSelectedEndTime()).WillByDefault(Return(4.0));
+    EXPECT_FALSE(m_record->canSwitchTake(main->GetId(), TakeSwitch::CompSelection));
+    EXPECT_TRUE(m_record->canSwitchTake(take->GetId(), TakeSwitch::CompSelection));
+
+    //! [WHEN] Comping from the take lane, with the real AU3 undo stack behind the history mock
+    auto& history = ::ProjectHistory::Get(projectRef());
+    history.InitialState();
+    EXPECT_CALL(*m_projectHistory, pushHistoryState(_, _)).Times(1).WillOnce([&history](auto, auto) {
+        history.PushState(::TranslatableString::untranslatable(wxString("Comp")), ::TranslatableString::untranslatable(wxString("Comp")));
+    });
+    const auto mainId = main->GetId();
+    const auto takeId = take->GetId();
+    EXPECT_TRUE(m_record->switchTake(takeId, TakeSwitch::CompSelection));
+    EXPECT_FLOAT_EQ(sampleAt(*main, 3.5), 2.0f);
+    EXPECT_FLOAT_EQ(sampleAt(*take, 3.5), 1.0f);
+
+    //! [THEN] The comp source is saved with the project as the clip name
+    XMLStringWriter xml;
+    main->WriteXML(xml);
+    EXPECT_NE(xml.ToStdString().find("name=\"Take 1\""), std::string::npos);
+
+    //! [WHEN] Undo
+    ASSERT_TRUE(history.UndoAvailable());
+    UndoManager::Get(projectRef()).Undo([&history](const UndoStackElem& elem) { history.PopState(elem.state); });
+
+    //! [THEN] One step restores both lanes
+    Au3WaveTrack* mainAfter = DomAccessor::findWaveTrack(projectRef(), mainId);
+    Au3WaveTrack* takeAfter = DomAccessor::findWaveTrack(projectRef(), takeId);
+    ASSERT_TRUE(mainAfter && takeAfter);
+    EXPECT_FLOAT_EQ(sampleAt(*mainAfter, 3.5), 1.0f);
+    EXPECT_FLOAT_EQ(sampleAt(*takeAfter, 3.5), 2.0f);
+    EXPECT_FALSE(history.UndoAvailable());
 }
 }

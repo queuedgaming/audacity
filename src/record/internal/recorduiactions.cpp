@@ -24,6 +24,7 @@ static const ActionQuery RECORD_LEAD_IN_RECORDING_QUERY("action://record/lead-in
 static const ActionQuery RECORD_NEXT_TAKE_QUERY("action://record/next-take");
 static const ActionQuery RECORD_PREVIOUS_TAKE_QUERY("action://record/previous-take");
 static const ActionQuery RECORD_ACTIVATE_TAKE_QUERY("action://record/activate-take");
+static const ActionQuery RECORD_COMP_TAKE_SELECTION_QUERY("action://record/comp-take-selection");
 
 const UiActionList RecordUiActions::m_mainActions = {
     UiAction(RECORD_START_QUERY.toString(),
@@ -112,6 +113,14 @@ const UiActionList RecordUiActions::m_mainActions = {
              TranslatableString("action", "Activate take"),
              //: Action description: shown as a tooltip; can be a full sentence
              TranslatableString("action_description", "Make the focused take lane the active take of its track")
+             ),
+    UiAction(RECORD_COMP_TAKE_SELECTION_QUERY.toString(),
+             au::context::UiCtxProjectOpened,
+             au::context::CTX_PROJECT_FOCUSED,
+             //: Action title: shown as a menu item or a button label; keep it short
+             TranslatableString("action", "Comp selection from take"),
+             //: Action description: shown as a tooltip; can be a full sentence
+             TranslatableString("action_description", "Use the selected time range of the focused take lane on its main track")
              ),
     UiAction("record-on-current-track",
              au::context::UiCtxProjectOpened,

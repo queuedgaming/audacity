@@ -123,6 +123,15 @@ const std::vector<CommandInfo> s_commandInfos = {
         InputSchema(),
         Decoration()
     },
+    CommandInfo{
+        RECORD_COMP_TAKE_SELECTION_COMMAND,
+        //: Command title: shown as a menu item or a button label; keep it short
+        TranslatableString("command", "Comp selection from take"),
+        //: Command description: shown as a tooltip; can be a full sentence
+        TranslatableString("command_description", "Use the selected time range of the focused take lane on its main track"),
+        InputSchema(),
+        Decoration()
+    },
 };
 }
 

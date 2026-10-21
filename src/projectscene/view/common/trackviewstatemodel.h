@@ -79,6 +79,8 @@ public:
     Q_INVOKABLE void toggleTakeLanes();
     //! Make this take lane the active take (same as the "Activate take" action)
     Q_INVOKABLE void activateTake();
+    //! Range comping: use the selected time range of this take lane on its main track
+    Q_INVOKABLE void compSelection();
 
     bool isPlaying() const;
     bool isRecording() const;

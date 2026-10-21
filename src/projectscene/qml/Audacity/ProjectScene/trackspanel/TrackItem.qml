@@ -25,7 +25,7 @@ ListItemBlank {
     property NavigationPanel headerNavigationPanel: null
 
     property alias headerTrailingControlsComponent: headerTrailingControls.sourceComponent
-    property int headerTrailingControlsNavigationStart: collapsed ? title.navigation.order + 2 : extraControlsNavigationEnd + 1
+    property int headerTrailingControlsNavigationStart: collapsed ? title.navigation.order + 3 : extraControlsNavigationEnd + 1
     property int headerTrailingControlsNavigationEnd: 0
 
     property alias extraControlsComponent: extraControlsLoader.sourceComponent
@@ -246,6 +246,24 @@ ListItemBlank {
                     onClicked: trackViewState.activateTake()
                 }
 
+                //! Range comping: select a time range on this take lane, then use it on the main track
+                FlatButton {
+                    id: compButton
+                    objectName: "CompSelectionButton"
+                    visible: trackViewState.takeRole === 2
+                    Layout.preferredWidth: 44
+                    Layout.preferredHeight: 20
+                    text: qsTrc("projectscene", "Comp")
+                    toolTipTitle: qsTrc("projectscene", "Use selected range")
+                    toolTipDescription: qsTrc("projectscene", "Replace the selected time range of the main track with this take")
+                    navigation.panel: root.headerNavigationPanel
+                    navigation.name: "CompSelectionButton"
+                    navigation.order: takeButton.navigation.order + 1
+                    navigation.accessible.name: toolTipTitle
+                    navigation.accessible.description: toolTipDescription
+                    onClicked: trackViewState.compSelection()
+                }
+
                 Loader {
                     id: headerTrailingControls
                     visible: root.collapsed && item !== null
@@ -257,7 +275,7 @@ ListItemBlank {
                     menuModel: contextMenuModel
 
                     navigation.panel: root.headerNavigationPanel
-                    navigation.order: root.collapsed ? root.headerTrailingControlsNavigationEnd + 1 : title.navigation.order + 2
+                    navigation.order: root.collapsed ? root.headerTrailingControlsNavigationEnd + 1 : title.navigation.order + 3
                     navigation.accessible.name: qsTrc("projectscene", "Track menu")
 
                     onClicked: {

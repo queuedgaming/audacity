@@ -11,6 +11,7 @@
 #include "au3-project/Project.h"
 #include "au3-track/Track.h"
 #include "au3-wave-track/WaveTrack.h"
+#include "au3-wave-track/WaveClip.h"
 #include "au3-xml/XMLWriter.h"
 
 using namespace au::au3;
@@ -189,17 +190,17 @@ std::shared_ptr<WaveTrack> copyRegion(const WaveTrack& track, double s, double e
 }
 
 //! Exchange the audio of `a` and `b` within [s, e]; audio outside stays in place
-void swapRegion(WaveTrack& a, WaveTrack& b, double s, double e)
+void swapRegion(WaveTrack& a, WaveTrack& b, double s, double e, bool merge = true)
 {
     auto fromA = copyRegion(a, s, e);
     auto fromB = copyRegion(b, s, e);
     if (fromB) {
-        a.ClearAndPaste(s, e, *fromB);
+        a.ClearAndPaste(s, e, *fromB, true, merge);
     } else {
         a.Clear(s, e, false);
     }
     if (fromA) {
-        b.ClearAndPaste(s, e, *fromA);
+        b.ClearAndPaste(s, e, *fromA, true, merge);
     } else {
         b.Clear(s, e, false);
     }
@@ -365,5 +366,74 @@ bool takelanes::activateTake(AudacityProject& project, WaveTrack& mainTrack, Wav
         return false;
     }
     swapRegion(mainTrack, take, take.GetStartTime(), take.GetEndTime());
+    return true;
+}
+
+wxString takelanes::compLabel(int index)
+{
+    return wxString::Format(wxT("Take %d"), index);
+}
+
+namespace {
+//! Blend `main` with `other` over [from, from + len) samples: weight of main's own audio goes 0 -> 1
+//! (fadeIn) or 1 -> 0 (fade out), the rest comes from `other`
+void blend(WaveTrack& main, const WaveTrack& other, sampleCount from, size_t len, bool fadeIn)
+{
+    if (len == 0) {
+        return;
+    }
+    const size_t nCh = main.NChannels();
+    std::vector<std::vector<float> > mine(nCh, std::vector<float>(len)), theirs(nCh, std::vector<float>(len));
+    std::vector<float*> mp(nCh), tp(nCh);
+    for (size_t c = 0; c < nCh; ++c) {
+        mp[c] = mine[c].data();
+        tp[c] = theirs[c].data();
+    }
+    main.GetFloats(0, nCh, mp.data(), from, len, false, FillFormat::fillZero, false);
+    other.GetFloats(0, std::min(nCh, other.NChannels()), tp.data(), from, len, false, FillFormat::fillZero, false);
+    for (size_t c = 0; c < nCh; ++c) {
+        const float* src = c < other.NChannels() ? tp[c] : tp[0];
+        for (size_t i = 0; i < len; ++i) {
+            const float w = (static_cast<float>(i) + 0.5f) / static_cast<float>(len);
+            const float g = fadeIn ? w : 1.0f - w;
+            mp[c][i] = mp[c][i] * g + src[i] * (1.0f - g);
+        }
+    }
+    (void)main.SetFloats(mp.data(), from, len);
+}
+}
+
+bool takelanes::compRange(AudacityProject& project, WaveTrack& mainTrack, WaveTrack& take, double t0, double t1,
+                          double crossfade)
+{
+    const auto takes = takesOf(project, mainTrack);
+    if (std::find(takes.begin(), takes.end(), &take) == takes.end()) {
+        return false;
+    }
+    t0 = mainTrack.SnapToSample(t0);
+    t1 = mainTrack.SnapToSample(t1);
+    if (t1 <= t0) {
+        return false;
+    }
+    // Keep the comped region a separate clip so it can show where it came from
+    swapRegion(mainTrack, take, t0, t1, /*merge*/ false);
+
+    const auto name = compLabel(TakeLaneInfo::Get(take).takeIndex);
+    for (const auto& clip : mainTrack.Intervals()) {
+        const double cs = clip->GetPlayStartTime();
+        const double ce = clip->GetPlayEndTime();
+        if (cs >= t0 - 1e-9 && ce <= t1 + 1e-9) {
+            clip->SetName(name);
+        }
+    }
+
+    // Crossfades on the main track only: the take keeps the replaced audio bit-exact
+    const auto s0 = mainTrack.TimeToLongSamples(t0);
+    const auto s1 = mainTrack.TimeToLongSamples(t1);
+    const auto total = (s1 - s0).as_size_t();
+    const size_t fade = std::min<size_t>(total / 2,
+                                         static_cast<size_t>(std::max(0.0, crossfade) * mainTrack.GetRate() + 0.5));
+    blend(mainTrack, take, s0, fade, true);
+    blend(mainTrack, take, s1 - fade, fade, false);
     return true;
 }

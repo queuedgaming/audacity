@@ -93,6 +93,9 @@ CommandState RecordCommandsState::commandState(const Command& command) const
     if (command == RECORD_ACTIVATE_TAKE_COMMAND) {
         return CommandState(controller()->canSwitchTake(TakeSwitch::Activate));
     }
+    if (command == RECORD_COMP_TAKE_SELECTION_COMMAND) {
+        return CommandState(controller()->canSwitchTake(TakeSwitch::CompSelection));
+    }
 
     if (command == RECORD_LEAD_IN_RECORDING_COMMAND) {
         return CommandState(controller()->isRecordAllowed() && !controller()->isRecording());

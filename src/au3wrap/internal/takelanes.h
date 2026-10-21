@@ -88,5 +88,17 @@ bool cycleTakes(AudacityProject& project, WaveTrack& mainTrack, bool forward);
 //! Make `take` the active one: swap its audio region with the main track's, so the
 //! previously active audio becomes this take lane. Returns false if `take` is not a take of `mainTrack`.
 bool activateTake(AudacityProject& project, WaveTrack& mainTrack, WaveTrack& take);
+
+//! Range comping: make [t0, t1] of `take` active on `mainTrack`. The two lanes exchange
+//! their audio in that range, so the replaced main audio is kept (untouched) in the take and
+//! comping the same range again restores the main track. The comped region becomes its own
+//! clip on the main track, named after the take ("Take N"), and gets linear crossfades of
+//! `crossfade` seconds (at most half the range) with the replaced main audio at both boundaries.
+//! Returns false if `take` is not a take of `mainTrack` or the range is empty.
+bool compRange(AudacityProject& project, WaveTrack& mainTrack, WaveTrack& take, double t0, double t1,
+               double crossfade);
+
+//! Label for comped regions of take number `index` ("Take N")
+wxString compLabel(int index);
 }
 }

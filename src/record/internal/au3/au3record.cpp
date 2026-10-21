@@ -1031,6 +1031,10 @@ bool Au3Record::canSwitchTake(trackedit::TrackId trackId, TakeSwitch kind) const
     if (kind == TakeSwitch::Activate) {
         return track != main && !track->Intervals().empty();
     }
+    if (kind == TakeSwitch::CompSelection) {
+        return track != main
+               && selectionController()->dataSelectedEndTime() > selectionController()->dataSelectedStartTime();
+    }
     const auto takes = takesOf(projectRef(), *main);
     return std::any_of(takes.begin(), takes.end(), [](Au3WaveTrack* t) { return !t->Intervals().empty(); });
 }
@@ -1044,9 +1048,22 @@ muse::Ret Au3Record::switchTake(trackedit::TrackId trackId, TakeSwitch kind)
     Au3WaveTrack* track = DomAccessor::findWaveTrack(project, ::TrackId(trackId));
     Au3WaveTrack* main = TakeLaneInfo::Get(*track).isTake() ? mainOf(project, *track) : track;
 
-    const bool done = (kind == TakeSwitch::Activate)
-                      ? activateTake(project, *main, *track)
-                      : cycleTakes(project, *main, kind == TakeSwitch::Next);
+    bool done = false;
+    switch (kind) {
+    case TakeSwitch::Activate:
+        done = activateTake(project, *main, *track);
+        break;
+    case TakeSwitch::CompSelection:
+        done = compRange(project, *main, *track,
+                         selectionController()->dataSelectedStartTime(),
+                         selectionController()->dataSelectedEndTime(),
+                         std::max(0.0, recordConfiguration()->crossfadeDuration() / 1000.0));
+        break;
+    case TakeSwitch::Next:
+    case TakeSwitch::Previous:
+        done = cycleTakes(project, *main, kind == TakeSwitch::Next);
+        break;
+    }
     if (!done) {
         return make_ret(Ret::Code::InternalError);
     }
@@ -1058,9 +1075,15 @@ muse::Ret Au3Record::switchTake(trackedit::TrackId trackId, TakeSwitch kind)
         }
     }
 
-    projectHistory()->pushHistoryState(trc("record", "Switched take"),
-                                       /*: Undo history entry name; shown after Undo and Redo in the Edit menu */
-                                       trc("record", "Switch take"));
+    if (kind == TakeSwitch::CompSelection) {
+        projectHistory()->pushHistoryState(trc("record", "Comped selection from take"),
+                                           /*: Undo history entry name; shown after Undo and Redo in the Edit menu */
+                                           trc("record", "Comp take"));
+    } else {
+        projectHistory()->pushHistoryState(trc("record", "Switched take"),
+                                           /*: Undo history entry name; shown after Undo and Redo in the Edit menu */
+                                           trc("record", "Switch take"));
+    }
     return make_ok();
 }
 

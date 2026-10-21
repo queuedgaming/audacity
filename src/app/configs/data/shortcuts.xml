@@ -849,6 +849,10 @@
         <seq>Alt+[</seq>
     </SC>
     <SC>
+        <key>action://record/comp-take-selection</key>
+        <seq>Alt+Shift+C</seq>
+    </SC>
+    <SC>
         <key>toggle-loop-region</key>
         <seq>L</seq>
     </SC>

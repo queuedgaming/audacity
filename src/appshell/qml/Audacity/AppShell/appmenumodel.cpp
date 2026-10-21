@@ -386,6 +386,7 @@ MenuItem* AppMenuModel::makeRecordMenu()
         makeMenuItem(record::RECORD_NEXT_TAKE_COMMAND),
         makeMenuItem(record::RECORD_PREVIOUS_TAKE_COMMAND),
         makeMenuItem(record::RECORD_ACTIVATE_TAKE_COMMAND),
+        makeMenuItem(record::RECORD_COMP_TAKE_SELECTION_COMMAND),
         //! makeMenuItem("toggle-sound-activated-recording"),
         //! makeMenuItem("set-sound-activation-level"),
     };

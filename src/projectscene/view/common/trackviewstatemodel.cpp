@@ -260,3 +260,11 @@ au::playback::PlaybackMeterModel* TrackViewStateModel::meterModel() const
 {
     return m_meterModel;
 }
+
+void TrackViewStateModel::compSelection()
+{
+    if (m_takeLaneState.role == TakeLaneState::Role::Take
+        && record()->canSwitchTake(m_trackId, record::TakeSwitch::CompSelection)) {
+        record()->switchTake(m_trackId, record::TakeSwitch::CompSelection);
+    }
+}

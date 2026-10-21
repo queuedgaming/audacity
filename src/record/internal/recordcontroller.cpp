@@ -24,6 +24,7 @@ const ActionQuery RECORD_LEAD_IN_RECORDING_QUERY("action://record/lead-in-record
 const ActionQuery RECORD_NEXT_TAKE_QUERY("action://record/next-take");
 const ActionQuery RECORD_PREVIOUS_TAKE_QUERY("action://record/previous-take");
 const ActionQuery RECORD_ACTIVATE_TAKE_QUERY("action://record/activate-take");
+const ActionQuery RECORD_COMP_TAKE_SELECTION_QUERY("action://record/comp-take-selection");
 
 const ActionCode RECORD_ON_CURRENT_TRACK_CODE("record-on-current-track");
 const ActionCode RECORD_ON_NEW_TRACK_CODE("record-on-new-track");
@@ -43,6 +44,7 @@ void RecordController::init()
     cd->onRequest(this, RECORD_NEXT_TAKE_COMMAND, [this]() { return switchTake(TakeSwitch::Next); });
     cd->onRequest(this, RECORD_PREVIOUS_TAKE_COMMAND, [this]() { return switchTake(TakeSwitch::Previous); });
     cd->onRequest(this, RECORD_ACTIVATE_TAKE_COMMAND, [this]() { return switchTake(TakeSwitch::Activate); });
+    cd->onRequest(this, RECORD_COMP_TAKE_SELECTION_COMMAND, [this]() { return switchTake(TakeSwitch::CompSelection); });
 
     static const std::vector<ActionToCommand> actionToCommand = {
         { RECORD_START_QUERY.toString(), RECORD_START_COMMAND, {} },
@@ -56,6 +58,7 @@ void RecordController::init()
         { RECORD_NEXT_TAKE_QUERY.toString(), RECORD_NEXT_TAKE_COMMAND, {} },
         { RECORD_PREVIOUS_TAKE_QUERY.toString(), RECORD_PREVIOUS_TAKE_COMMAND, {} },
         { RECORD_ACTIVATE_TAKE_QUERY.toString(), RECORD_ACTIVATE_TAKE_COMMAND, {} },
+        { RECORD_COMP_TAKE_SELECTION_QUERY.toString(), RECORD_COMP_TAKE_SELECTION_COMMAND, {} },
     };
     registerActionToCommand(this, actionToCommand, commandDispatcher(), dispatcher());
 
