@@ -11,6 +11,7 @@
 #include "framework/global/async/channel.h"
 #include "framework/global/types/secs.h"
 #include "trackedit/trackedittypes.h"
+#include "taketypes.h"
 
 namespace au::record {
 class IRecordController : MODULE_EXPORT_INTERFACE
@@ -38,6 +39,9 @@ public:
     virtual muse::async::Notification isLeadInRecordingChanged() const = 0;
     virtual muse::secs_t leadInRecordingStartTime() const = 0;
     virtual std::vector<trackedit::TrackId> leadInRecordingTrackIds() const = 0;
+
+    //! Take lanes of the focused (or first selected) track
+    virtual bool canSwitchTake(TakeSwitch kind) const = 0;
 };
 }
 

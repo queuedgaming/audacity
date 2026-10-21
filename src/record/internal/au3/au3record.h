@@ -54,6 +54,9 @@ public:
     muse::Ret stop() override;
     muse::Ret leadInRecording() override;
 
+    bool canSwitchTake(trackedit::TrackId trackId, TakeSwitch kind) const override;
+    muse::Ret switchTake(trackedit::TrackId trackId, TakeSwitch kind) override;
+
     //! Stop time for lead-in recording: selection end when punch-out applies, else DBL_MAX
     double punchOutTime(double punchInTime) const;
 

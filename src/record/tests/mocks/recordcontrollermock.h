@@ -29,5 +29,6 @@ public:
     MOCK_METHOD(muse::async::Notification, isLeadInRecordingChanged, (), (const, override));
     MOCK_METHOD(muse::secs_t, leadInRecordingStartTime, (), (const, override));
     MOCK_METHOD(std::vector<trackedit::TrackId>, leadInRecordingTrackIds, (), (const, override));
+    MOCK_METHOD(bool, canSwitchTake, (TakeSwitch), (const, override));
 };
 }

@@ -21,6 +21,9 @@ const ActionQuery RECORD_STOP_QUERY("action://record/stop");
 const ActionQuery RECORD_TOGGLE_MIC_METERING("action://record/toggle-mic-metering");
 const ActionQuery RECORD_TOGGLE_INPUT_MONITORING("action://record/toggle-input-monitoring");
 const ActionQuery RECORD_LEAD_IN_RECORDING_QUERY("action://record/lead-in-recording");
+const ActionQuery RECORD_NEXT_TAKE_QUERY("action://record/next-take");
+const ActionQuery RECORD_PREVIOUS_TAKE_QUERY("action://record/previous-take");
+const ActionQuery RECORD_ACTIVATE_TAKE_QUERY("action://record/activate-take");
 
 const ActionCode RECORD_ON_CURRENT_TRACK_CODE("record-on-current-track");
 const ActionCode RECORD_ON_NEW_TRACK_CODE("record-on-new-track");
@@ -37,6 +40,9 @@ void RecordController::init()
     cd->onRequest(this, RECORD_TOGGLE_MIC_METERING_COMMAND, [this]() { return toggleMicMetering(); });
     cd->onRequest(this, RECORD_TOGGLE_INPUT_MONITORING_COMMAND, [this]() { return toggleInputMonitoring(); });
     cd->onRequest(this, RECORD_LEAD_IN_RECORDING_COMMAND, [this]() { return leadInRecording(); });
+    cd->onRequest(this, RECORD_NEXT_TAKE_COMMAND, [this]() { return switchTake(TakeSwitch::Next); });
+    cd->onRequest(this, RECORD_PREVIOUS_TAKE_COMMAND, [this]() { return switchTake(TakeSwitch::Previous); });
+    cd->onRequest(this, RECORD_ACTIVATE_TAKE_COMMAND, [this]() { return switchTake(TakeSwitch::Activate); });
 
     static const std::vector<ActionToCommand> actionToCommand = {
         { RECORD_START_QUERY.toString(), RECORD_START_COMMAND, {} },
@@ -47,6 +53,9 @@ void RecordController::init()
         { RECORD_TOGGLE_MIC_METERING.toString(), RECORD_TOGGLE_MIC_METERING_COMMAND, {} },
         { RECORD_TOGGLE_INPUT_MONITORING.toString(), RECORD_TOGGLE_INPUT_MONITORING_COMMAND, {} },
         { RECORD_LEAD_IN_RECORDING_QUERY.toString(), RECORD_LEAD_IN_RECORDING_COMMAND, {} },
+        { RECORD_NEXT_TAKE_QUERY.toString(), RECORD_NEXT_TAKE_COMMAND, {} },
+        { RECORD_PREVIOUS_TAKE_QUERY.toString(), RECORD_PREVIOUS_TAKE_COMMAND, {} },
+        { RECORD_ACTIVATE_TAKE_QUERY.toString(), RECORD_ACTIVATE_TAKE_COMMAND, {} },
     };
     registerActionToCommand(this, actionToCommand, commandDispatcher(), dispatcher());
 
@@ -250,6 +259,36 @@ Ret RecordController::leadInRecording()
 
     setCurrentRecordStatus(RecordStatus::LeadIn);
     return make_ok();
+}
+
+std::optional<au::trackedit::TrackId> RecordController::takeTargetTrack() const
+{
+    const trackedit::TrackId focused = trackNavigationController()->focusedTrack();
+    if (focused >= 0) {
+        return focused;
+    }
+    const auto selected = selectionController()->selectedTracks();
+    if (!selected.empty()) {
+        return selected.front();
+    }
+    return std::nullopt;
+}
+
+bool RecordController::canSwitchTake(TakeSwitch kind) const
+{
+    if (isRecording()) {
+        return false;
+    }
+    const auto track = takeTargetTrack();
+    return track && record()->canSwitchTake(*track, kind);
+}
+
+Ret RecordController::switchTake(TakeSwitch kind)
+{
+    if (!canSwitchTake(kind)) {
+        return make_ret(Ret::Code::NotSupported);
+    }
+    return record()->switchTake(*takeTargetTrack(), kind);
 }
 
 void RecordController::stopPlaybackIfPaused()

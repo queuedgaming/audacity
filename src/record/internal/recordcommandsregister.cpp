@@ -96,6 +96,33 @@ const std::vector<CommandInfo> s_commandInfos = {
         InputSchema(),
         Decoration(IconCode::Code::RECORD_FILL)
     },
+    CommandInfo{
+        RECORD_NEXT_TAKE_COMMAND,
+        //: Command title: shown as a menu item or a button label; keep it short
+        TranslatableString("command", "Next take"),
+        //: Command description: shown as a tooltip; can be a full sentence
+        TranslatableString("command_description", "Play the next take of the focused track"),
+        InputSchema(),
+        Decoration()
+    },
+    CommandInfo{
+        RECORD_PREVIOUS_TAKE_COMMAND,
+        //: Command title: shown as a menu item or a button label; keep it short
+        TranslatableString("command", "Previous take"),
+        //: Command description: shown as a tooltip; can be a full sentence
+        TranslatableString("command_description", "Play the previous take of the focused track"),
+        InputSchema(),
+        Decoration()
+    },
+    CommandInfo{
+        RECORD_ACTIVATE_TAKE_COMMAND,
+        //: Command title: shown as a menu item or a button label; keep it short
+        TranslatableString("command", "Activate take"),
+        //: Command description: shown as a tooltip; can be a full sentence
+        TranslatableString("command_description", "Make the focused take lane the active take of its track"),
+        InputSchema(),
+        Decoration()
+    },
 };
 }
 

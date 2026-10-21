@@ -509,4 +509,31 @@ TEST_F(Au3RecordTests, TakeLanesFollowMainTrackName)
     EXPECT_EQ(take->GetName(), wxString("Lead - Take 1"));
     EXPECT_EQ(takelanes::mainOf(projectRef(), *take), main);
 }
+
+TEST_F(Au3RecordTests, SwitchTakeIsUndoableAndChecksTheTarget)
+{
+    Au3WaveTrack* main = addFilledTrack(0.0, 10.0, 1.0f);
+    Au3WaveTrack* plain = addFilledTrack(0.0, 10.0, 5.0f);
+    auto snapshot = takelanes::snapshotFrom(*main, 2.0);
+    Au3WaveTrack* take = takelanes::preserveAsTake(projectRef(), *main, *snapshot, 2.0, 5.0);
+    fillRegion(*take, *addFilledTrack(0.0, 3.0, 2.0f));
+
+    //! [THEN] Only tracks with takes can switch; only a take lane can be activated
+    EXPECT_FALSE(m_record->canSwitchTake(plain->GetId(), TakeSwitch::Next));
+    EXPECT_TRUE(m_record->canSwitchTake(main->GetId(), TakeSwitch::Next));
+    EXPECT_TRUE(m_record->canSwitchTake(take->GetId(), TakeSwitch::Previous));
+    EXPECT_FALSE(m_record->canSwitchTake(main->GetId(), TakeSwitch::Activate));
+    EXPECT_TRUE(m_record->canSwitchTake(take->GetId(), TakeSwitch::Activate));
+
+    //! [WHEN] The take is activated from its lane
+    EXPECT_CALL(*m_projectHistory, pushHistoryState(_, _)).Times(1);
+    EXPECT_TRUE(m_record->switchTake(take->GetId(), TakeSwitch::Activate));
+
+    //! [THEN] The main track plays it and an undo step is recorded
+    EXPECT_FLOAT_EQ(sampleAt(*main, 3.0), 2.0f);
+    EXPECT_FLOAT_EQ(sampleAt(*take, 3.0), 1.0f);
+
+    //! [AND] An invalid request does nothing
+    EXPECT_FALSE(m_record->switchTake(plain->GetId(), TakeSwitch::Next));
+}
 }

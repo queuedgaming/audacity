@@ -4,6 +4,7 @@
 #ifndef AU_RECORD_RECORDCONTROLLER_H
 #define AU_RECORD_RECORDCONTROLLER_H
 
+#include <optional>
 #include "framework/global/async/asyncable.h"
 #include "framework/global/modularity/ioc.h"
 
@@ -69,6 +70,7 @@ public:
     muse::async::Notification isInputMonitoringOnChanged() const override;
 
     bool isLeadInRecording() const override;
+    bool canSwitchTake(TakeSwitch kind) const override;
     muse::async::Notification isLeadInRecordingChanged() const override;
     muse::secs_t leadInRecordingStartTime() const override;
     std::vector<trackedit::TrackId> leadInRecordingTrackIds() const override;
@@ -91,6 +93,8 @@ private:
     muse::Ret resume();
     muse::Ret stop();
     muse::Ret leadInRecording();
+    muse::Ret switchTake(TakeSwitch kind);
+    std::optional<trackedit::TrackId> takeTargetTrack() const;
     void stopPlaybackIfPaused();
     muse::Ret toggleMicMetering();
     muse::Ret toggleInputMonitoring();

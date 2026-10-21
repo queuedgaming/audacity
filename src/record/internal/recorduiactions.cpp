@@ -21,6 +21,9 @@ static const ActionQuery RECORD_LEVEL_QUERY("action://record/level");
 static const ActionQuery RECORD_TOGGLE_MIC_METERING("action://record/toggle-mic-metering");
 static const ActionQuery RECORD_TOGGLE_INPUT_MONITORING("action://record/toggle-input-monitoring");
 static const ActionQuery RECORD_LEAD_IN_RECORDING_QUERY("action://record/lead-in-recording");
+static const ActionQuery RECORD_NEXT_TAKE_QUERY("action://record/next-take");
+static const ActionQuery RECORD_PREVIOUS_TAKE_QUERY("action://record/previous-take");
+static const ActionQuery RECORD_ACTIVATE_TAKE_QUERY("action://record/activate-take");
 
 const UiActionList RecordUiActions::m_mainActions = {
     UiAction(RECORD_START_QUERY.toString(),
@@ -85,6 +88,30 @@ const UiActionList RecordUiActions::m_mainActions = {
              //: Action description: shown as a tooltip; can be a full sentence
              TranslatableString("action_description", "Start lead-in recording"),
              IconCode::Code::RECORD_FILL
+             ),
+    UiAction(RECORD_NEXT_TAKE_QUERY.toString(),
+             au::context::UiCtxProjectOpened,
+             au::context::CTX_PROJECT_FOCUSED,
+             //: Action title: shown as a menu item or a button label; keep it short
+             TranslatableString("action", "Next take"),
+             //: Action description: shown as a tooltip; can be a full sentence
+             TranslatableString("action_description", "Play the next take of the focused track")
+             ),
+    UiAction(RECORD_PREVIOUS_TAKE_QUERY.toString(),
+             au::context::UiCtxProjectOpened,
+             au::context::CTX_PROJECT_FOCUSED,
+             //: Action title: shown as a menu item or a button label; keep it short
+             TranslatableString("action", "Previous take"),
+             //: Action description: shown as a tooltip; can be a full sentence
+             TranslatableString("action_description", "Play the previous take of the focused track")
+             ),
+    UiAction(RECORD_ACTIVATE_TAKE_QUERY.toString(),
+             au::context::UiCtxProjectOpened,
+             au::context::CTX_PROJECT_FOCUSED,
+             //: Action title: shown as a menu item or a button label; keep it short
+             TranslatableString("action", "Activate take"),
+             //: Action description: shown as a tooltip; can be a full sentence
+             TranslatableString("action_description", "Make the focused take lane the active take of its track")
              ),
     UiAction("record-on-current-track",
              au::context::UiCtxProjectOpened,

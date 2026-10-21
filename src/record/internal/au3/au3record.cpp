@@ -1018,6 +1018,52 @@ void Au3Record::preserveOverwrittenTakes()
     m_takeSnapshots.clear();
 }
 
+bool Au3Record::canSwitchTake(trackedit::TrackId trackId, TakeSwitch kind) const
+{
+    Au3WaveTrack* track = DomAccessor::findWaveTrack(projectRef(), ::TrackId(trackId));
+    if (!track) {
+        return false;
+    }
+    Au3WaveTrack* main = TakeLaneInfo::Get(*track).isTake() ? mainOf(projectRef(), *track) : track;
+    if (!main) {
+        return false;
+    }
+    if (kind == TakeSwitch::Activate) {
+        return track != main && !track->Intervals().empty();
+    }
+    const auto takes = takesOf(projectRef(), *main);
+    return std::any_of(takes.begin(), takes.end(), [](Au3WaveTrack* t) { return !t->Intervals().empty(); });
+}
+
+muse::Ret Au3Record::switchTake(trackedit::TrackId trackId, TakeSwitch kind)
+{
+    if (!canSwitchTake(trackId, kind)) {
+        return make_ret(Ret::Code::NotSupported);
+    }
+    Au3Project& project = projectRef();
+    Au3WaveTrack* track = DomAccessor::findWaveTrack(project, ::TrackId(trackId));
+    Au3WaveTrack* main = TakeLaneInfo::Get(*track).isTake() ? mainOf(project, *track) : track;
+
+    const bool done = (kind == TakeSwitch::Activate)
+                      ? activateTake(project, *main, *track)
+                      : cycleTakes(project, *main, kind == TakeSwitch::Next);
+    if (!done) {
+        return make_ret(Ret::Code::InternalError);
+    }
+
+    if (auto prj = globalContext()->currentTrackeditProject()) {
+        prj->notifyAboutTrackClipListChanged(DomConverter::track(main));
+        for (Au3WaveTrack* take : takesOf(project, *main)) {
+            prj->notifyAboutTrackClipListChanged(DomConverter::track(take));
+        }
+    }
+
+    projectHistory()->pushHistoryState(trc("record", "Switched take"),
+                                       /*: Undo history entry name; shown after Undo and Redo in the Edit menu */
+                                       trc("record", "Switch take"));
+    return make_ok();
+}
+
 void Au3Record::cancelRecording()
 {
     m_takeSnapshots.clear();

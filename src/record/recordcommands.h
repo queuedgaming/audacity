@@ -15,4 +15,7 @@ inline static const muse::rcommand::Command RECORD_LEVEL_COMMAND("command://reco
 inline static const muse::rcommand::Command RECORD_TOGGLE_MIC_METERING_COMMAND("command://record/toggle-mic-metering");
 inline static const muse::rcommand::Command RECORD_TOGGLE_INPUT_MONITORING_COMMAND("command://record/toggle-input-monitoring");
 inline static const muse::rcommand::Command RECORD_LEAD_IN_RECORDING_COMMAND("command://record/lead-in-recording");
+inline static const muse::rcommand::Command RECORD_NEXT_TAKE_COMMAND("command://record/next-take");
+inline static const muse::rcommand::Command RECORD_PREVIOUS_TAKE_COMMAND("command://record/previous-take");
+inline static const muse::rcommand::Command RECORD_ACTIVATE_TAKE_COMMAND("command://record/activate-take");
 }

@@ -14,6 +14,7 @@
 
 #include "trackedit/trackedittypes.h"
 #include "iaudioinput.h"
+#include "taketypes.h"
 
 namespace au::record {
 class IRecord : MODULE_EXPORT_INTERFACE
@@ -35,6 +36,10 @@ public:
     virtual const std::vector<trackedit::ClipKey>& recordingClipKeys() const = 0;
 
     virtual muse::async::Notification recordingFinished() const = 0;
+
+    //! Take lanes of the given track (a main track or one of its takes)
+    virtual bool canSwitchTake(trackedit::TrackId trackId, TakeSwitch kind) const = 0;
+    virtual muse::Ret switchTake(trackedit::TrackId trackId, TakeSwitch kind) = 0;
 };
 
 using IAudioRecordPtr = std::shared_ptr<IRecord>;

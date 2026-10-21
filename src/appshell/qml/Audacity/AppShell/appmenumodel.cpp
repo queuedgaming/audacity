@@ -382,6 +382,10 @@ MenuItem* AppMenuModel::makeRecordMenu()
         //! makeMenuItem("set-up-timed-recording"),
         //! NOTE: kept as an action until shortcuts move to commands, otherwise the menu loses its Shift+D shortcut
         makeMenuItem("action://record/lead-in-recording"),
+        makeSeparator(),
+        makeMenuItem(record::RECORD_NEXT_TAKE_COMMAND),
+        makeMenuItem(record::RECORD_PREVIOUS_TAKE_COMMAND),
+        makeMenuItem(record::RECORD_ACTIVATE_TAKE_COMMAND),
         //! makeMenuItem("toggle-sound-activated-recording"),
         //! makeMenuItem("set-sound-activation-level"),
     };
