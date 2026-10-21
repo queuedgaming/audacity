@@ -32,6 +32,10 @@ public:
     void setCrossfadeDuration(double milliseconds) override;
     muse::async::Notification crossfadeDurationChanged() const override;
 
+    bool punchOutAtSelectionEnd() const override;
+    void setPunchOutAtSelectionEnd(bool enabled) override;
+    muse::async::Notification punchOutAtSelectionEndChanged() const override;
+
     RecordingTrackNameOptions recordingTrackNameOptions() const override;
 
 private:
@@ -39,5 +43,6 @@ private:
     muse::async::Notification m_isInputMonitoringOnChanged;
     muse::async::Notification m_leadInTimeDurationChanged;
     muse::async::Notification m_crossfadeDurationChanged;
+    muse::async::Notification m_punchOutAtSelectionEndChanged;
 };
 }

@@ -96,6 +96,8 @@ public:
         .WillByDefault(Return(2.0));
         ON_CALL(*m_recordConfiguration, crossfadeDuration())
         .WillByDefault(Return(0.0));
+        ON_CALL(*m_recordConfiguration, punchOutAtSelectionEnd())
+        .WillByDefault(Return(true));
 
         initTestProject();
     }
@@ -197,6 +199,56 @@ TEST_F(Au3RecordTests, LeadInRecordingStartsAtPlayheadPosition)
     //! stale selection start
     EXPECT_DOUBLE_EQ(startedAt, 8.0);
     EXPECT_DOUBLE_EQ(streamOptions.leadInTime, 2.0);
+}
+
+TEST_F(Au3RecordTests, LeadInRecordingPunchesOutAtSelectionEnd)
+{
+    //! [GIVEN] A selected track, the playhead at 8s and a time selection 7s..12s
+    addSelectedMonoTrack();
+    ON_CALL(*m_playbackState, playbackPosition()).WillByDefault(Return(muse::secs_t(8.0)));
+    ON_CALL(*m_selectionController, dataSelectedStartTime()).WillByDefault(Return(trackedit::secs_t(7.0)));
+    ON_CALL(*m_selectionController, dataSelectedEndTime()).WillByDefault(Return(trackedit::secs_t(12.0)));
+
+    double startedAt = -1.0, endAt = -1.0;
+    EXPECT_CALL(*m_audioEngine, startStream(_, _, _, _, _, _))
+    .WillOnce(DoAll(SaveArg<1>(&startedAt), SaveArg<2>(&endAt), Return(1)));
+
+    //! [WHEN] Lead-in recording is initiated
+    EXPECT_TRUE(m_record->leadInRecording());
+
+    //! [THEN] Recording punches in at the playhead and out at the selection end
+    EXPECT_DOUBLE_EQ(startedAt, 8.0);
+    EXPECT_DOUBLE_EQ(endAt, 12.0);
+}
+
+TEST_F(Au3RecordTests, LeadInRecordingWithoutSelectionRecordsUntilStopped)
+{
+    addSelectedMonoTrack();
+    ON_CALL(*m_playbackState, playbackPosition()).WillByDefault(Return(muse::secs_t(8.0)));
+    ON_CALL(*m_selectionController, dataSelectedStartTime()).WillByDefault(Return(trackedit::secs_t(0.0)));
+    ON_CALL(*m_selectionController, dataSelectedEndTime()).WillByDefault(Return(trackedit::secs_t(0.0)));
+
+    double endAt = -1.0;
+    EXPECT_CALL(*m_audioEngine, startStream(_, _, _, _, _, _))
+    .WillOnce(DoAll(SaveArg<2>(&endAt), Return(1)));
+
+    EXPECT_TRUE(m_record->leadInRecording());
+    EXPECT_DOUBLE_EQ(endAt, DBL_MAX);
+}
+
+TEST_F(Au3RecordTests, PunchOutIgnoresSelectionEndingBeforePunchIn)
+{
+    ON_CALL(*m_selectionController, dataSelectedStartTime()).WillByDefault(Return(trackedit::secs_t(2.0)));
+    ON_CALL(*m_selectionController, dataSelectedEndTime()).WillByDefault(Return(trackedit::secs_t(5.0)));
+    EXPECT_DOUBLE_EQ(m_record->punchOutTime(8.0), DBL_MAX);
+}
+
+TEST_F(Au3RecordTests, PunchOutDisabledByPreference)
+{
+    ON_CALL(*m_recordConfiguration, punchOutAtSelectionEnd()).WillByDefault(Return(false));
+    ON_CALL(*m_selectionController, dataSelectedStartTime()).WillByDefault(Return(trackedit::secs_t(7.0)));
+    ON_CALL(*m_selectionController, dataSelectedEndTime()).WillByDefault(Return(trackedit::secs_t(12.0)));
+    EXPECT_DOUBLE_EQ(m_record->punchOutTime(8.0), DBL_MAX);
 }
 
 TEST_F(Au3RecordTests, LeadInRecordingAtZeroPlayheadFails)

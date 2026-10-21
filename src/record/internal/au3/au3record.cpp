@@ -489,6 +489,21 @@ muse::Ret Au3Record::stop()
     return make_ok();
 }
 
+double Au3Record::punchOutTime(double punchInTime) const
+{
+    if (!recordConfiguration()->punchOutAtSelectionEnd()) {
+        return DBL_MAX;
+    }
+    const double selStart = selectionController()->dataSelectedStartTime();
+    const double selEnd = selectionController()->dataSelectedEndTime();
+    // Require a real time selection whose end lies after the punch-in point
+    constexpr double minPunchDuration = 0.01;
+    if (selEnd > selStart && selEnd > punchInTime + minPunchDuration) {
+        return selEnd;
+    }
+    return DBL_MAX;
+}
+
 muse::Ret Au3Record::leadInRecording()
 {
     Au3Project& project = projectRef();
@@ -612,7 +627,10 @@ muse::Ret Au3Record::leadInRecording()
     double leadInTime = std::max(0.0, std::min(t1, recordConfiguration()->leadInTimeDuration()));
 
     auto* pCrossfadeData = crossfadeData.empty() ? nullptr : &crossfadeData;
-    Ret ret = doRecord(project, transportTracks, t1, DBL_MAX, false, rateOfSelected, leadInTime, pCrossfadeData);
+    // Punch-out: if a time selection ends after the punch-in point, stop
+    // recording automatically at the selection end. Otherwise record until stopped.
+    const double punchOut = punchOutTime(t1);
+    Ret ret = doRecord(project, transportTracks, t1, punchOut, false, rateOfSelected, leadInTime, pCrossfadeData);
 
     if (ret) {
         // Initialize recording position to punch point so that cancelling

@@ -52,6 +52,9 @@ public:
     muse::Ret stop() override;
     muse::Ret leadInRecording() override;
 
+    //! Stop time for lead-in recording: selection end when punch-out applies, else DBL_MAX
+    double punchOutTime(double punchInTime) const;
+
     IAudioInputPtr audioInput() const override;
 
     muse::async::Channel<muse::secs_t> recordPositionChanged() const override;

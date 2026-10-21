@@ -27,6 +27,10 @@ public:
     MOCK_METHOD(void, setCrossfadeDuration, (double), (override));
     MOCK_METHOD(muse::async::Notification, crossfadeDurationChanged, (), (const, override));
 
+    MOCK_METHOD(bool, punchOutAtSelectionEnd, (), (const, override));
+    MOCK_METHOD(void, setPunchOutAtSelectionEnd, (bool), (override));
+    MOCK_METHOD(muse::async::Notification, punchOutAtSelectionEndChanged, (), (const, override));
+
     MOCK_METHOD(RecordingTrackNameOptions, recordingTrackNameOptions, (), (const, override));
 };
 }

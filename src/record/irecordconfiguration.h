@@ -42,6 +42,12 @@ public:
     virtual void setCrossfadeDuration(double milliseconds) = 0;
     virtual muse::async::Notification crossfadeDurationChanged() const = 0;
 
+    //! Punch-out: when a time selection ends after the punch-in point, lead-in
+    //! (punch and roll) recording stops automatically at the selection end
+    virtual bool punchOutAtSelectionEnd() const = 0;
+    virtual void setPunchOutAtSelectionEnd(bool enabled) = 0;
+    virtual muse::async::Notification punchOutAtSelectionEndChanged() const = 0;
+
     virtual RecordingTrackNameOptions recordingTrackNameOptions() const = 0;
 };
 }
