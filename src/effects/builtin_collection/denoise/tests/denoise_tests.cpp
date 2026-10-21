@@ -256,3 +256,28 @@ TEST(DenoiseTests, BreathGainAttenuatesWithFadesAndLeavesPhrasesAlone)
     const auto gs = breathGain(y.size(), rate, found, s);
     EXPECT_EQ(gs[size_t((found[0].t0 + found[0].t1) / 2 * rate)], 0.0f);
 }
+
+// Not a test: writes the synthetic takes used for the screenshots.
+// Run with --gtest_also_run_disabled_tests --gtest_filter='*DumpDemoWavs*'
+static void writeWav(const char* path, const std::vector<float>& x, int rate)
+{
+    FILE* f = std::fopen(path, "wb");
+    ASSERT_TRUE(f);
+    const uint32_t dataBytes = uint32_t(x.size() * 2);
+    auto u32 = [&](uint32_t v) { std::fwrite(&v, 4, 1, f); };
+    auto u16 = [&](uint16_t v) { std::fwrite(&v, 2, 1, f); };
+    std::fwrite("RIFF", 1, 4, f); u32(36 + dataBytes); std::fwrite("WAVEfmt ", 1, 8, f);
+    u32(16); u16(1); u16(1); u32(rate); u32(rate * 2); u16(2); u16(16);
+    std::fwrite("data", 1, 4, f); u32(dataBytes);
+    for (float v : x) {
+        const int16_t s = int16_t(std::lround(std::clamp(v, -1.0f, 1.0f) * 32767.0f));
+        std::fwrite(&s, 2, 1, f);
+    }
+    std::fclose(f);
+}
+
+TEST(DenoiseTests, DISABLED_DumpDemoWavs)
+{
+    writeWav("/tmp/denoise_noisy.wav", vocalTake(44100.0, 0.02f).audio, 44100);
+    writeWav("/tmp/denoise_breaths.wav", vocalTake(44100.0).audio, 44100);
+}
