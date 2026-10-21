@@ -21,6 +21,8 @@ class RecordingPreferencesModel : public QObject, public muse::async::Asyncable
     Q_PROPERTY(bool isMicMeteringOn READ isMicMeteringOn WRITE setIsMicMeteringOn NOTIFY isMicMeteringOnChanged)
     Q_PROPERTY(double leadInTimeDuration READ leadInTimeDuration NOTIFY leadInTimeDurationChanged)
     Q_PROPERTY(double crossfadeDuration READ crossfadeDuration NOTIFY crossfadeDurationChanged)
+    Q_PROPERTY(bool punchOutAtSelectionEnd READ punchOutAtSelectionEnd WRITE setPunchOutAtSelectionEnd NOTIFY punchOutAtSelectionEndChanged)
+    Q_PROPERTY(bool keepTakesWhenRecordingOver READ keepTakesWhenRecordingOver WRITE setKeepTakesWhenRecordingOver NOTIFY keepTakesWhenRecordingOverChanged)
 
     muse::GlobalInject<record::IRecordConfiguration> recordConfiguration;
 
@@ -39,10 +41,18 @@ public:
     double crossfadeDuration() const;
     Q_INVOKABLE void setCrossfadeDuration(double milliseconds);
 
+    bool punchOutAtSelectionEnd() const;
+    void setPunchOutAtSelectionEnd(bool enabled);
+
+    bool keepTakesWhenRecordingOver() const;
+    void setKeepTakesWhenRecordingOver(bool enabled);
+
 signals:
     void isInputMonitoringOnChanged();
     void isMicMeteringOnChanged();
     void leadInTimeDurationChanged();
     void crossfadeDurationChanged();
+    void punchOutAtSelectionEndChanged();
+    void keepTakesWhenRecordingOverChanged();
 };
 }

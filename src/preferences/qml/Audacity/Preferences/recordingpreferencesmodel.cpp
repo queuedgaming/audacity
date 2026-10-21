@@ -15,6 +15,12 @@ RecordingPreferencesModel::RecordingPreferencesModel(QObject* parent)
     recordConfiguration()->isInputMonitoringOnChanged().onNotify(this, [this]() {
         emit isInputMonitoringOnChanged();
     });
+    recordConfiguration()->punchOutAtSelectionEndChanged().onNotify(this, [this]() {
+        emit punchOutAtSelectionEndChanged();
+    });
+    recordConfiguration()->keepTakesWhenRecordingOverChanged().onNotify(this, [this]() {
+        emit keepTakesWhenRecordingOverChanged();
+    });
     recordConfiguration()->leadInTimeDurationChanged().onNotify(this, [this]() {
         emit leadInTimeDurationChanged();
     });
@@ -67,4 +73,30 @@ void RecordingPreferencesModel::setCrossfadeDuration(double milliseconds)
         return;
     }
     recordConfiguration()->setCrossfadeDuration(milliseconds);
+}
+
+bool RecordingPreferencesModel::punchOutAtSelectionEnd() const
+{
+    return recordConfiguration()->punchOutAtSelectionEnd();
+}
+
+void RecordingPreferencesModel::setPunchOutAtSelectionEnd(bool enabled)
+{
+    if (punchOutAtSelectionEnd() == enabled) {
+        return;
+    }
+    recordConfiguration()->setPunchOutAtSelectionEnd(enabled);
+}
+
+bool RecordingPreferencesModel::keepTakesWhenRecordingOver() const
+{
+    return recordConfiguration()->keepTakesWhenRecordingOver();
+}
+
+void RecordingPreferencesModel::setKeepTakesWhenRecordingOver(bool enabled)
+{
+    if (keepTakesWhenRecordingOver() == enabled) {
+        return;
+    }
+    recordConfiguration()->setKeepTakesWhenRecordingOver(enabled);
 }

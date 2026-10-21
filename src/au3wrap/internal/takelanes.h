@@ -40,6 +40,8 @@ public:
 
     std::string groupId;
     int takeIndex = 0;
+    //! Main tracks only: whether the take lanes are shown (view state, saved with the project)
+    bool lanesExpanded = false;
 };
 
 namespace takelanes {

@@ -841,6 +841,14 @@
         <seq>Shift+D</seq>
     </SC>
     <SC>
+        <key>action://record/next-take</key>
+        <seq>Alt+]</seq>
+    </SC>
+    <SC>
+        <key>action://record/previous-take</key>
+        <seq>Alt+[</seq>
+    </SC>
+    <SC>
         <key>toggle-loop-region</key>
         <seq>L</seq>
     </SC>

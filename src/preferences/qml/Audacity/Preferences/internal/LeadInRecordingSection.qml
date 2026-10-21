@@ -67,4 +67,32 @@ BaseSection {
             recordingPreferencesModel.setCrossfadeDuration(newValue)
         }
     }
+
+    CheckBox {
+        width: parent.width
+        text: qsTrc("preferences", "Stop lead-in recording at the end of the selection (punch-out)")
+        checked: recordingPreferencesModel.punchOutAtSelectionEnd
+
+        navigation.name: "PunchOutAtSelectionEndCheckBox"
+        navigation.panel: root.navigation
+        navigation.row: 2
+
+        onClicked: {
+            recordingPreferencesModel.punchOutAtSelectionEnd = !checked
+        }
+    }
+
+    CheckBox {
+        width: parent.width
+        text: qsTrc("preferences", "Keep overwritten audio as take lanes when recording over a region")
+        checked: recordingPreferencesModel.keepTakesWhenRecordingOver
+
+        navigation.name: "KeepTakesWhenRecordingOverCheckBox"
+        navigation.panel: root.navigation
+        navigation.row: 3
+
+        onClicked: {
+            recordingPreferencesModel.keepTakesWhenRecordingOver = !checked
+        }
+    }
 }

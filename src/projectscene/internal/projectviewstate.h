@@ -170,7 +170,6 @@ private:
     void recomputeTotalTrackHeight();
     void refreshTakeLanes();
     int effectiveTrackHeight(const trackedit::TrackId& trackId) const;
-    std::set<trackedit::TrackId> m_expandedTakeLanes;
     muse::async::Notification m_takeLanesChanged;
     bool doSetTrackViewType(const trackedit::TrackId& trackId, trackedit::TrackViewType viewType);
 

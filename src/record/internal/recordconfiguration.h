@@ -34,6 +34,7 @@ public:
 
     bool keepTakesWhenRecordingOver() const override;
     void setKeepTakesWhenRecordingOver(bool enabled) override;
+    muse::async::Notification keepTakesWhenRecordingOverChanged() const override;
 
     bool punchOutAtSelectionEnd() const override;
     void setPunchOutAtSelectionEnd(bool enabled) override;
@@ -47,5 +48,6 @@ private:
     muse::async::Notification m_leadInTimeDurationChanged;
     muse::async::Notification m_crossfadeDurationChanged;
     muse::async::Notification m_punchOutAtSelectionEndChanged;
+    muse::async::Notification m_keepTakesChanged;
 };
 }

@@ -24,6 +24,11 @@
 
 #include <set>
 
+#include "framework/global/async/processevents.h"
+
+#include "au3-xml/XMLWriter.h"
+#include "au3-xml/XMLTagHandler.h"
+
 using namespace ::testing;
 using ::testing::_;
 
@@ -46,7 +51,7 @@ public:
         .WillByDefault(Return(muse::async::Notification()));
 
         ON_CALL(*m_projectHistoryMock, historyChanged())
-        .WillByDefault(Return(muse::async::Channel<trackedit::HistoryEvent>()));
+        .WillByDefault(Return(m_historyChanged));
 
         ON_CALL(*m_globalContextMock, currentProject())
         .WillByDefault(Return(m_currentProject));
@@ -150,6 +155,7 @@ protected:
     const std::shared_ptr<NiceMock<trackedit::SelectionControllerMock> > m_selectionControllerMock
         = std::make_shared<NiceMock<trackedit::SelectionControllerMock> >();
 
+    muse::async::Channel<trackedit::HistoryEvent> m_historyChanged;
     const std::shared_ptr<NiceMock<trackedit::ProjectHistoryMock> > m_projectHistoryMock
         = std::make_shared<NiceMock<trackedit::ProjectHistoryMock> >();
 
@@ -257,6 +263,67 @@ TEST_F(ProjectViewStateTests, TakeLanes_CollapsedTakesAreHiddenAndTakeNoSpace)
 
     au3::TakeLaneInfo::Get(*main) = au3::TakeLaneInfo { };
     au3::TakeLaneInfo::Get(*take) = au3::TakeLaneInfo { };
+}
+
+TEST_F(ProjectViewStateTests, TakeLanes_ExpandStateIsStoredOnTheMainTrackAndFollowsUndo)
+{
+    const trackedit::TrackIdList tracks = getAllTracks();
+    ASSERT_EQ(tracks.size(), 2);
+    m_projectViewState->setTrackHeight(tracks[0], 50);
+    m_projectViewState->setTrackHeight(tracks[1], 60);
+    auto& au3Project = *reinterpret_cast<au3::Au3Project*>(m_au3ProjectAccessor->au3ProjectPtr());
+    auto* main = au3::DomAccessor::findWaveTrack(au3Project, au3::Au3TrackId(tracks[0]));
+    auto* take = au3::DomAccessor::findWaveTrack(au3Project, au3::Au3TrackId(tracks[1]));
+    ASSERT_TRUE(main && take);
+    au3::TakeLaneInfo::Get(*main) = au3::TakeLaneInfo { };
+    au3::TakeLaneInfo::Get(*main).groupId = "group";
+    au3::TakeLaneInfo::Get(*take).groupId = "group";
+    au3::TakeLaneInfo::Get(*take).takeIndex = 1;
+
+    //! [WHEN] Expanding: stored on the main track and the current undo state is updated (no new undo entry)
+    EXPECT_CALL(*m_projectHistoryMock, modifyState(false)).Times(1);
+    EXPECT_CALL(*m_projectHistoryMock, pushHistoryState(_, _)).Times(0);
+    m_projectViewState->setTakeLanesExpanded(tracks[0], true);
+    EXPECT_TRUE(au3::TakeLaneInfo::Get(*main).lanesExpanded);
+    EXPECT_FALSE(m_projectViewState->isTrackHiddenInLanes(tracks[1]).val);
+
+    //! [WHEN] Undo restores a track state where the lanes were collapsed
+    au3::TakeLaneInfo::Get(*main).lanesExpanded = false;
+    int notifications = 0;
+    muse::async::Asyncable receiver;
+    m_projectViewState->takeLanesChanged().onNotify(&receiver, [&notifications]() { ++notifications; });
+    m_historyChanged.send(trackedit::HistoryEvent {});
+    muse::async::processMessages();
+
+    //! [THEN] The view follows
+    EXPECT_FALSE(m_projectViewState->takeLanesExpanded(tracks[0]));
+    EXPECT_TRUE(m_projectViewState->isTrackHiddenInLanes(tracks[1]).val);
+    EXPECT_GE(notifications, 1);
+
+    au3::TakeLaneInfo::Get(*main) = au3::TakeLaneInfo { };
+    au3::TakeLaneInfo::Get(*take) = au3::TakeLaneInfo { };
+}
+
+TEST_F(ProjectViewStateTests, TakeLanes_ExpandStateIsSavedInTheProjectXml)
+{
+    au3::TakeLaneInfo info;
+    info.groupId = "abc";
+    info.lanesExpanded = true;
+    XMLStringWriter writer;
+    info.WriteXML(writer);
+    EXPECT_NE(writer.find(wxT("expanded=\"1\"")), wxString::npos);
+
+    au3::TakeLaneInfo read;
+    AttributesList attrs { { "group", XMLAttributeValueView(std::string_view("abc")) },
+        { "index", XMLAttributeValueView(0LL) }, { "expanded", XMLAttributeValueView(true) } };
+    EXPECT_TRUE(read.HandleXMLTag(au3::TakeLaneInfo::XMLTag(), attrs));
+    EXPECT_TRUE(read.lanesExpanded);
+
+    //! Takes and collapsed groups write no flag
+    info.lanesExpanded = false;
+    XMLStringWriter writer2;
+    info.WriteXML(writer2);
+    EXPECT_EQ(writer2.find(wxT("expanded")), wxString::npos);
 }
 
 TEST_F(ProjectViewStateTests, isBelowAllTracks_IsFalseWithoutTracks)

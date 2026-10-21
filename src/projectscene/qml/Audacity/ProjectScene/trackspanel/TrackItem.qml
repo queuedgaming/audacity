@@ -25,7 +25,7 @@ ListItemBlank {
     property NavigationPanel headerNavigationPanel: null
 
     property alias headerTrailingControlsComponent: headerTrailingControls.sourceComponent
-    property int headerTrailingControlsNavigationStart: collapsed ? title.navigation.order + 1 : extraControlsNavigationEnd + 1
+    property int headerTrailingControlsNavigationStart: collapsed ? title.navigation.order + 2 : extraControlsNavigationEnd + 1
     property int headerTrailingControlsNavigationEnd: 0
 
     property alias extraControlsComponent: extraControlsLoader.sourceComponent
@@ -189,7 +189,9 @@ ListItemBlank {
                     toolTipTitle: trackViewState.takeLanesExpanded ? qsTrc("projectscene", "Collapse take lanes")
                                                                    : qsTrc("projectscene", "Expand take lanes")
                     navigation.panel: root.headerNavigationPanel
-                    navigation.accessible.name: toolTipTitle
+                    navigation.name: "TakeLanesToggle"
+                    navigation.order: root.navigation.order + 1
+                    navigation.accessible.name: (Boolean(root.item) ? root.item.title + ": " : "") + toolTipTitle
                     onClicked: trackViewState.toggleTakeLanes()
                 }
 
@@ -203,10 +205,13 @@ ListItemBlank {
                     Layout.preferredHeight: title.implicitHeight
                     Layout.fillWidth: true
 
+                    //! On a take lane the name is "<main> (Take N)" and gets cut off; the take button shows it instead
+                    visible: trackViewState.takeRole !== 2
+
                     text: Boolean(root.item) ? root.item.title : ""
 
                     navigation.panel: root.headerNavigationPanel
-                    navigation.order: root.navigation.order + 1
+                    navigation.order: root.navigation.order + 2
 
                     onTextEdited: function (text) {
                         if (Boolean(root.item)) {
@@ -226,12 +231,18 @@ ListItemBlank {
                     id: takeButton
                     objectName: "ActivateTakeButton"
                     visible: trackViewState.takeRole === 2
-                    Layout.preferredWidth: 56
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: 56
                     Layout.preferredHeight: 20
                     text: trackViewState.takeLabel
-                    toolTipTitle: qsTrc("projectscene", "Make this the active take")
+                    //! Full take name lives in the tooltip
+                    toolTipTitle: Boolean(root.item) ? root.item.title : ""
+                    toolTipDescription: qsTrc("projectscene", "Make this the active take")
                     navigation.panel: root.headerNavigationPanel
+                    navigation.name: "ActivateTakeButton"
+                    navigation.order: title.navigation.order + 1
                     navigation.accessible.name: toolTipTitle
+                    navigation.accessible.description: toolTipDescription
                     onClicked: trackViewState.activateTake()
                 }
 
@@ -246,7 +257,7 @@ ListItemBlank {
                     menuModel: contextMenuModel
 
                     navigation.panel: root.headerNavigationPanel
-                    navigation.order: root.collapsed ? root.headerTrailingControlsNavigationEnd + 1 : title.navigation.order + 1
+                    navigation.order: root.collapsed ? root.headerTrailingControlsNavigationEnd + 1 : title.navigation.order + 2
                     navigation.accessible.name: qsTrc("projectscene", "Track menu")
 
                     onClicked: {

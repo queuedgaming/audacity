@@ -51,6 +51,7 @@ public:
     //! Take lanes: when recording over existing audio, keep the overwritten audio as a muted take track
     virtual bool keepTakesWhenRecordingOver() const = 0;
     virtual void setKeepTakesWhenRecordingOver(bool enabled) = 0;
+    virtual muse::async::Notification keepTakesWhenRecordingOverChanged() const = 0;
 
     virtual RecordingTrackNameOptions recordingTrackNameOptions() const = 0;
 };

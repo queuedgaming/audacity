@@ -81,6 +81,11 @@ bool TakeLaneInfo::HandleXMLTag(const std::string_view& tag, const AttributesLis
             if (value.TryGet(v)) {
                 takeIndex = static_cast<int>(v);
             }
+        } else if (attr == "expanded") {
+            bool v = false;
+            if (value.TryGet(v)) {
+                lanesExpanded = v;
+            }
         }
     }
     return true;
@@ -94,6 +99,9 @@ void TakeLaneInfo::WriteXML(XMLWriter& xmlFile) const
     xmlFile.StartTag(XMLTag());
     xmlFile.WriteAttr(wxT("group"), wxString(groupId));
     xmlFile.WriteAttr(wxT("index"), takeIndex);
+    if (takeIndex == 0 && lanesExpanded) {
+        xmlFile.WriteAttr(wxT("expanded"), true);
+    }
     xmlFile.EndTag(XMLTag());
 }
 

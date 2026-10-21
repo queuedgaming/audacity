@@ -49,6 +49,9 @@ void RecordConfiguration::init()
     });
 
     muse::settings()->setDefaultValue(KEEP_TAKES_KEY, muse::Val(true));
+    muse::settings()->valueChanged(KEEP_TAKES_KEY).onReceive(nullptr, [this](const muse::Val&) {
+        m_keepTakesChanged.notify();
+    });
 
     muse::settings()->setDefaultValue(PUNCH_OUT_AT_SELECTION_END_KEY, muse::Val(true));
     muse::settings()->valueChanged(PUNCH_OUT_AT_SELECTION_END_KEY).onReceive(nullptr, [this](const muse::Val&) {
@@ -124,6 +127,11 @@ bool RecordConfiguration::keepTakesWhenRecordingOver() const
 void RecordConfiguration::setKeepTakesWhenRecordingOver(bool enabled)
 {
     muse::settings()->setSharedValue(KEEP_TAKES_KEY, muse::Val(enabled));
+}
+
+muse::async::Notification RecordConfiguration::keepTakesWhenRecordingOverChanged() const
+{
+    return m_keepTakesChanged;
 }
 
 bool RecordConfiguration::punchOutAtSelectionEnd() const

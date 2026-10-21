@@ -250,6 +250,9 @@ void ProjectViewState::init(const std::shared_ptr<au3::IAu3Project>& project)
     });
 
     projectHistory()->historyChanged().onReceive(this, [this](auto) {
+        // Undo/redo can restore a different expand state of the take lanes
+        recomputeTotalTrackHeight();
+        m_takeLanesChanged.notify();
         updateItemsBoundaries(false);
     });
 }
@@ -421,7 +424,13 @@ muse::ValCh<bool> ProjectViewState::isTrackHiddenInLanes(const trackedit::TrackI
 
 bool ProjectViewState::takeLanesExpanded(const trackedit::TrackId& mainTrackId) const
 {
-    return m_expandedTakeLanes.count(mainTrackId) > 0;
+    const auto project = globalContext()->currentProject();
+    if (!project) {
+        return false;
+    }
+    auto* au3Project = reinterpret_cast<au::au3::Au3Project*>(project->au3ProjectPtr());
+    const auto* track = au3Project ? au::au3::DomAccessor::findWaveTrack(*au3Project, au::au3::Au3TrackId(mainTrackId)) : nullptr;
+    return track && au::au3::TakeLaneInfo::Get(*track).lanesExpanded;
 }
 
 void ProjectViewState::setTakeLanesExpanded(const trackedit::TrackId& mainTrackId, bool expanded)
@@ -429,11 +438,20 @@ void ProjectViewState::setTakeLanesExpanded(const trackedit::TrackId& mainTrackI
     if (takeLanesExpanded(mainTrackId) == expanded) {
         return;
     }
-    if (expanded) {
-        m_expandedTakeLanes.insert(mainTrackId);
-    } else {
-        m_expandedTakeLanes.erase(mainTrackId);
+    const auto project = globalContext()->currentProject();
+    if (!project) {
+        return;
     }
+    auto* au3Project = reinterpret_cast<au::au3::Au3Project*>(project->au3ProjectPtr());
+    auto* track = au3Project ? au::au3::DomAccessor::findWaveTrack(*au3Project, au::au3::Au3TrackId(mainTrackId)) : nullptr;
+    if (!track) {
+        return;
+    }
+    // Stored on the main track so it is saved in the project and travels with undo states.
+    // Like track height, it is view state: update the current undo state rather than adding one.
+    au::au3::TakeLaneInfo::Get(*track).lanesExpanded = expanded;
+    projectHistory()->modifyState();
+    projectHistory()->markUnsaved();
     recomputeTotalTrackHeight();
     updateItemsBoundaries(false);
     m_takeLanesChanged.notify();
