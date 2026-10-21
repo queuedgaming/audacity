@@ -12,15 +12,16 @@ NoiseSuppressionViewModel::NoiseSuppressionViewModel(QObject* parent, int instan
 
 QString NoiseSuppressionViewModel::effectTitle() const { return muse::qtrc("effects/noisesuppression", "Noise suppression"); }
 
-double NoiseSuppressionViewModel::mix() const { return effect<NoiseSuppressionEffect>().mMixPercent; }
+double NoiseSuppressionViewModel::mix() const { return settings<NoiseSuppressionSettings>().mMixPercent; }
 
 void NoiseSuppressionViewModel::setMix(double v)
 {
-    auto& e = effect<NoiseSuppressionEffect>();
-    if (e.mMixPercent != v) {
-        e.mMixPercent = v;
-        emit mixChanged();
+    if (mix() == v) {
+        return;
     }
+    // goes through the settings access, so a realtime instance picks it up while playing
+    modifySettings<NoiseSuppressionSettings>([v](EffectSettings& s) { s.cast<NoiseSuppressionSettings>()->mMixPercent = v; });
+    emit mixChanged();
 }
 
 void NoiseSuppressionViewModel::doReload() { emit mixChanged(); }
@@ -30,44 +31,44 @@ BreathRemovalViewModel::BreathRemovalViewModel(QObject* parent, int instanceId)
 
 QString BreathRemovalViewModel::effectTitle() const { return muse::qtrc("effects/breathremoval", "Breath removal"); }
 
-double BreathRemovalViewModel::reduction() const { return effect<BreathRemovalEffect>().mReductionDb; }
+double BreathRemovalViewModel::reduction() const { return settings<BreathRemovalSettings>().mReductionDb; }
 void BreathRemovalViewModel::setReduction(double v)
 {
-    auto& e = effect<BreathRemovalEffect>();
-    if (e.mReductionDb != v) {
-        e.mReductionDb = v;
-        emit changed();
+    if (reduction() == v) {
+        return;
     }
+    modifySettings<BreathRemovalSettings>([v](EffectSettings& s) { s.cast<BreathRemovalSettings>()->mReductionDb = v; });
+    emit changed();
 }
 
-bool BreathRemovalViewModel::silence() const { return effect<BreathRemovalEffect>().mSilence; }
+bool BreathRemovalViewModel::silence() const { return settings<BreathRemovalSettings>().mSilence; }
 void BreathRemovalViewModel::setSilence(bool v)
 {
-    auto& e = effect<BreathRemovalEffect>();
-    if (e.mSilence != v) {
-        e.mSilence = v;
-        emit changed();
+    if (silence() == v) {
+        return;
     }
+    modifySettings<BreathRemovalSettings>([v](EffectSettings& s) { s.cast<BreathRemovalSettings>()->mSilence = v; });
+    emit changed();
 }
 
-double BreathRemovalViewModel::fadeMs() const { return effect<BreathRemovalEffect>().mFadeMs; }
+double BreathRemovalViewModel::fadeMs() const { return settings<BreathRemovalSettings>().mFadeMs; }
 void BreathRemovalViewModel::setFadeMs(double v)
 {
-    auto& e = effect<BreathRemovalEffect>();
-    if (e.mFadeMs != v) {
-        e.mFadeMs = v;
-        emit changed();
+    if (fadeMs() == v) {
+        return;
     }
+    modifySettings<BreathRemovalSettings>([v](EffectSettings& s) { s.cast<BreathRemovalSettings>()->mFadeMs = v; });
+    emit changed();
 }
 
-double BreathRemovalViewModel::sensitivity() const { return effect<BreathRemovalEffect>().mSensitivity; }
+double BreathRemovalViewModel::sensitivity() const { return settings<BreathRemovalSettings>().mSensitivity; }
 void BreathRemovalViewModel::setSensitivity(double v)
 {
-    auto& e = effect<BreathRemovalEffect>();
-    if (e.mSensitivity != v) {
-        e.mSensitivity = v;
-        emit changed();
+    if (sensitivity() == v) {
+        return;
     }
+    modifySettings<BreathRemovalSettings>([v](EffectSettings& s) { s.cast<BreathRemovalSettings>()->mSensitivity = v; });
+    emit changed();
 }
 
 void BreathRemovalViewModel::doReload() { emit changed(); }

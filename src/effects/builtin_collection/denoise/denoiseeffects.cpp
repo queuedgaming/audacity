@@ -52,8 +52,14 @@ const EffectParameterMethods& NoiseSuppressionEffect::Parameters() const
 
 NoiseSuppressionEffect::NoiseSuppressionEffect()
 {
-    Parameters().Reset(*this);
     SetLinearEffectFlag(false);
+}
+
+std::shared_ptr<::EffectInstance> NoiseSuppressionEffect::MakeInstance() const
+{
+    // like StatefulEffect: the instance calls through to the effect for destructive processing,
+    // but keeps its own streaming state so every realtime stack slot is independent
+    return std::make_shared<Instance>(const_cast<NoiseSuppressionEffect&>(*this));
 }
 
 ComponentInterfaceSymbol NoiseSuppressionEffect::GetSymbol() const { return Symbol; }
@@ -68,13 +74,14 @@ ManualPageID NoiseSuppressionEffect::ManualPage() const { return L"Noise_Suppres
 
 ::EffectType NoiseSuppressionEffect::GetType() const { return EffectTypeProcess; }
 
-bool NoiseSuppressionEffect::CheckWhetherSkipEffect(const EffectSettings&) const
+bool NoiseSuppressionEffect::CheckWhetherSkipEffect(const EffectSettings& settings) const
 {
-    return mMixPercent <= 0.0;
+    return GetSettings(settings).mMixPercent <= 0.0;
 }
 
-bool NoiseSuppressionEffect::Process(::EffectInstance&, EffectSettings&)
+bool NoiseSuppressionEffect::Process(::EffectInstance&, EffectSettings& settings)
 {
+    const double mix = GetSettings(settings).mMixPercent / 100.0;
     EffectOutputTracks outputs { *mTracks, GetType(), { { mT0, mT1 } } };
     int count = 0;
     for (auto track : outputs.Get().Selected<WaveTrack>()) {
@@ -87,7 +94,7 @@ bool NoiseSuppressionEffect::Process(::EffectInstance&, EffectSettings&)
                 return false;
             }
             auto x = read(*ch, *range);
-            const auto r = denoise::suppress(x.data(), x.size(), track->GetRate(), mMixPercent / 100.0);
+            const auto r = denoise::suppress(x.data(), x.size(), track->GetRate(), mix);
             if (!ch->SetFloats(r.audio.data(), range->start, range->len)) {
                 return false;
             }
@@ -111,10 +118,25 @@ const EffectParameterMethods& BreathRemovalEffect::Parameters() const
     return parameters;
 }
 
+denoise::BreathSettings BreathRemovalSettings::toCore() const
+{
+    denoise::BreathSettings s;
+    s.reductionDb = mReductionDb;
+    s.silence = mSilence;
+    s.fadeSec = mFadeMs / 1000.0;
+    // Sensitivity 0..100 maps the quietest accepted breath from 35 dB to 75 dB below the voice
+    s.minLevelBelowSpeechDb = 35.0 + 0.4 * std::clamp(mSensitivity, 0.0, 100.0);
+    return s;
+}
+
 BreathRemovalEffect::BreathRemovalEffect()
 {
-    Parameters().Reset(*this);
     SetLinearEffectFlag(false);
+}
+
+std::shared_ptr<::EffectInstance> BreathRemovalEffect::MakeInstance() const
+{
+    return std::make_shared<Instance>(const_cast<BreathRemovalEffect&>(*this));
 }
 
 ComponentInterfaceSymbol BreathRemovalEffect::GetSymbol() const { return Symbol; }
@@ -129,15 +151,10 @@ ManualPageID BreathRemovalEffect::ManualPage() const { return L"Breath_Removal";
 
 ::EffectType BreathRemovalEffect::GetType() const { return EffectTypeProcess; }
 
-bool BreathRemovalEffect::Process(::EffectInstance&, EffectSettings&)
+bool BreathRemovalEffect::Process(::EffectInstance&, EffectSettings& settings)
 {
     EffectOutputTracks outputs { *mTracks, GetType(), { { mT0, mT1 } } };
-    denoise::BreathSettings s;
-    s.reductionDb = mReductionDb;
-    s.silence = mSilence;
-    s.fadeSec = mFadeMs / 1000.0;
-    // Sensitivity 0..100 maps the quietest accepted breath from 35 dB to 75 dB below the voice
-    s.minLevelBelowSpeechDb = 35.0 + 0.4 * std::clamp(mSensitivity, 0.0, 100.0);
+    const denoise::BreathSettings s = GetSettings(settings).toCore();
     mLastBreathCount = 0;
     int count = 0;
     for (auto track : outputs.Get().Selected<WaveTrack>()) {
@@ -181,6 +198,100 @@ bool BreathRemovalEffect::Process(::EffectInstance&, EffectSettings&)
         return false;
     }
     outputs.Commit();
+    return true;
+}
+
+// ---------------- Realtime instances ----------------
+
+NoiseSuppressionEffect::Instance::Instance(NoiseSuppressionEffect& effect)
+    : StatefulEffect::Instance(effect) {}
+
+size_t NoiseSuppressionEffect::Instance::SetBlockSize(size_t maxBlockSize)
+{
+    m_blockSize = std::clamp<size_t>(maxBlockSize, 1, denoise::MAX_BLOCK);
+    return m_blockSize;
+}
+
+::EffectInstance::SampleCount NoiseSuppressionEffect::Instance::GetLatency(const EffectSettings&, double sampleRate) const
+{
+    // Only the realtime path has latency; destructive processing compensates internally
+    return m_processors.empty() ? 0 : denoise::StreamSuppressor::latencyFor(sampleRate);
+}
+
+bool NoiseSuppressionEffect::Instance::RealtimeInitialize(EffectSettings&, double, size_t)
+{
+    SetBlockSize(512);
+    m_processors.clear(); // a new processing scope (play, seek, loop) starts from a clean state
+    return true;
+}
+
+bool NoiseSuppressionEffect::Instance::RealtimeAddProcessor(EffectSettings&, EffectOutputs*, unsigned, float sampleRate)
+{
+    m_processors.push_back(std::make_unique<denoise::StreamSuppressor>(sampleRate));
+    return true;
+}
+
+size_t NoiseSuppressionEffect::Instance::RealtimeProcess(size_t group, EffectSettings& settings,
+                                                         const float* const* inBuf, float* const* outBuf,
+                                                         size_t numSamples)
+{
+    if (group >= m_processors.size()) {
+        return 0;
+    }
+    const double mix = NoiseSuppressionEffect::GetSettings(settings).mMixPercent / 100.0;
+    m_processors[group]->process(inBuf[0], outBuf[0], numSamples, mix);
+    return numSamples;
+}
+
+bool NoiseSuppressionEffect::Instance::RealtimeFinalize(EffectSettings&) noexcept
+{
+    m_processors.clear();
+    return true;
+}
+
+BreathRemovalEffect::Instance::Instance(BreathRemovalEffect& effect)
+    : StatefulEffect::Instance(effect) {}
+
+size_t BreathRemovalEffect::Instance::SetBlockSize(size_t maxBlockSize)
+{
+    m_blockSize = std::clamp<size_t>(maxBlockSize, 1, denoise::MAX_BLOCK);
+    return m_blockSize;
+}
+
+::EffectInstance::SampleCount BreathRemovalEffect::Instance::GetLatency(const EffectSettings&, double sampleRate) const
+{
+    return m_processors.empty() ? 0 : denoise::StreamBreathGate::latencyFor(sampleRate);
+}
+
+bool BreathRemovalEffect::Instance::RealtimeInitialize(EffectSettings&, double, size_t)
+{
+    SetBlockSize(512);
+    m_processors.clear();
+    return true;
+}
+
+bool BreathRemovalEffect::Instance::RealtimeAddProcessor(EffectSettings&, EffectOutputs*, unsigned, float sampleRate)
+{
+    // the host always hands us two channel buffers (a mono track's are the same), so detect on
+    // the mix of both and apply one gain to both
+    m_processors.push_back(std::make_unique<denoise::StreamBreathGate>(sampleRate, 2));
+    return true;
+}
+
+size_t BreathRemovalEffect::Instance::RealtimeProcess(size_t group, EffectSettings& settings, const float* const* inBuf,
+                                                      float* const* outBuf, size_t numSamples)
+{
+    if (group >= m_processors.size()) {
+        return 0;
+    }
+    const denoise::BreathSettings s = BreathRemovalEffect::GetSettings(settings).toCore();
+    m_processors[group]->process(inBuf, outBuf, numSamples, s);
+    return numSamples;
+}
+
+bool BreathRemovalEffect::Instance::RealtimeFinalize(EffectSettings&) noexcept
+{
+    m_processors.clear();
     return true;
 }
 }

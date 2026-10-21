@@ -7,6 +7,8 @@
 #include <algorithm>
 #include <random>
 #include <tuple>
+#include <chrono>
+#include <cstdio>
 
 #include "../denoisecore.h"
 
@@ -280,4 +282,262 @@ TEST(DenoiseTests, DISABLED_DumpDemoWavs)
 {
     writeWav("/tmp/denoise_noisy.wav", vocalTake(44100.0, 0.02f).audio, 44100);
     writeWav("/tmp/denoise_breaths.wav", vocalTake(44100.0).audio, 44100);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Streaming (realtime) versions
+
+namespace {
+//! Run a StreamSuppressor over x (flushed with latency zeros) in blocks from `sizes` (cycled)
+//! and return the latency-aligned output, same length as x
+std::vector<float> streamSuppress(StreamSuppressor& st, const std::vector<float>& x, const std::vector<size_t>& sizes,
+                                  double mix)
+{
+    const size_t L = st.latency();
+    std::vector<float> in(x);
+    in.resize(x.size() + L, 0.0f);
+    std::vector<float> out(in.size());
+    size_t pos = 0, b = 0;
+    while (pos < in.size()) {
+        const size_t len = std::min(sizes[b++ % sizes.size()], in.size() - pos);
+        st.process(in.data() + pos, out.data() + pos, len, mix);
+        pos += len;
+    }
+    return std::vector<float>(out.begin() + L, out.end());
+}
+
+std::vector<std::vector<float> > streamGate(StreamBreathGate& g, const std::vector<std::vector<float> >& x,
+                                            const std::vector<size_t>& sizes, const BreathSettings& s,
+                                            const BreathSettings* sLate = nullptr, size_t switchAt = 0)
+{
+    const size_t L = g.latency();
+    const size_t n = x[0].size();
+    std::vector<std::vector<float> > io(x.size());
+    for (size_t c = 0; c < x.size(); ++c) {
+        io[c] = x[c];
+        io[c].resize(n + L, 0.0f);
+    }
+    size_t pos = 0, b = 0;
+    std::vector<float*> p(x.size());
+    while (pos < n + L) {
+        const size_t len = std::min(sizes[b++ % sizes.size()], n + L - pos);
+        for (size_t c = 0; c < x.size(); ++c) {
+            p[c] = io[c].data() + pos;
+        }
+        // in place, like the host does
+        g.process(p.data(), p.data(), len, (sLate && pos >= switchAt) ? *sLate : s);
+        pos += len;
+    }
+    for (auto& c : io) {
+        c.erase(c.begin(), c.begin() + L);
+    }
+    return io;
+}
+
+double maxAbsDiff(const std::vector<float>& a, const std::vector<float>& b)
+{
+    double m = 0.0;
+    for (size_t i = 0; i < std::min(a.size(), b.size()); ++i) {
+        m = std::max(m, double(std::abs(a[i] - b[i])));
+    }
+    return m;
+}
+}
+
+TEST(DenoiseStreamTests, LatencyIsReportedPerRate)
+{
+    EXPECT_EQ(StreamSuppressor::latencyFor(48000.0), 962u);          // 480 model + 480 framing + 2
+    EXPECT_NEAR(StreamSuppressor::latencyFor(44100.0) / 44100.0, 0.0212, 0.001);
+    EXPECT_LT(StreamBreathGate::latencyFor(48000.0) / 48000.0, 0.25);
+    EXPECT_GT(StreamBreathGate::latencyFor(48000.0) / 48000.0, 0.15);
+    EXPECT_LT(StreamBreathGate::latencyFor(44100.0) / 44100.0, 0.25);
+}
+
+TEST(DenoiseStreamTests, StreamingSuppressionMatchesOfflineForAnyBlockSize)
+{
+    for (double rate : { 48000.0, 44100.0, 22050.0 }) {
+        Take t = vocalTake(rate, 0.02f);
+        t.audio.resize(size_t(2.5 * rate)); // keep the test quick
+        for (double mix : { 1.0, 0.6 }) {
+            const auto offline = suppress(t.audio.data(), t.audio.size(), rate, mix).audio;
+            const std::vector<std::vector<size_t> > patterns {
+                { 512 }, { 1 }, { 7 }, { 333 }, { 1023 }, { 4096 }, { 480 }, { 17, 1500, 3, 256, 999 }
+            };
+            for (const auto& sizes : patterns) {
+                if (sizes[0] == 1 && (rate != 44100.0 || mix != 1.0)) {
+                    continue; // sample-by-sample once is enough
+                }
+                StreamSuppressor st(rate);
+                const auto live = streamSuppress(st, t.audio, sizes, mix);
+                ASSERT_EQ(live.size(), offline.size());
+                EXPECT_LT(maxAbsDiff(live, offline), 1e-6) << rate << " block " << sizes[0] << " mix " << mix;
+                EXPECT_EQ(st.underflows(), 0u) << rate << " block " << sizes[0];
+            }
+        }
+    }
+}
+
+TEST(DenoiseStreamTests, StreamingSuppressionStrengthIsLiveAndSmooth)
+{
+    const double rate = 48000.0;
+    Take t = vocalTake(rate, 0.02f);
+    StreamSuppressor st(rate);
+    const size_t L = st.latency();
+    std::vector<float> in(t.audio), out(in.size());
+    const size_t half = in.size() / 2;
+    st.process(in.data(), out.data(), half, 1.0);
+    st.process(in.data() + half, out.data() + half, in.size() - half, 0.0); // dry from here on
+    // after the change (+ latency + ~10 ms smoothing) the output is the delayed dry input
+    double err = 0.0;
+    for (size_t i = half + size_t(0.1 * rate); i < in.size(); ++i) {
+        err = std::max(err, double(std::abs(out[i] - in[i - L])));
+    }
+    EXPECT_LT(err, 1e-4);
+    // and no jump at the switch
+    double jump = 0.0;
+    for (size_t i = half; i < half + size_t(0.05 * rate); ++i) {
+        jump = std::max(jump, double(std::abs(out[i] - out[i - 1])));
+    }
+    double typical = 0.0;
+    for (size_t i = 1; i < in.size(); ++i) {
+        typical = std::max(typical, double(std::abs(in[i] - in[i - 1])));
+    }
+    EXPECT_LT(jump, typical * 1.5);
+}
+
+TEST(DenoiseStreamTests, ResetGivesTheSameOutputAsAFreshInstance)
+{
+    const double rate = 44100.0;
+    Take a = vocalTake(rate, 0.02f);
+    Take b = vocalTake(rate, 0.01f);
+    b.audio.resize(size_t(2 * rate));
+    StreamSuppressor fresh(rate);
+    const auto expect = streamSuppress(fresh, b.audio, { 512 }, 1.0);
+    StreamSuppressor used(rate);
+    std::vector<float> junk(a.audio.size());
+    used.process(a.audio.data(), junk.data(), size_t(1.3 * rate), 1.0); // stop mid-phrase
+    used.reset();
+    const auto got = streamSuppress(used, b.audio, { 512 }, 1.0);
+    EXPECT_EQ(maxAbsDiff(got, expect), 0.0);
+
+    StreamBreathGate gFresh(rate, 1), gUsed(rate, 1);
+    const auto e2 = streamGate(gFresh, { b.audio }, { 256 }, BreathSettings {});
+    std::vector<float> scratch(a.audio.begin(), a.audio.begin() + size_t(3 * rate));
+    std::vector<float*> sp { scratch.data() };
+    gUsed.process(sp.data(), sp.data(), scratch.size(), BreathSettings {});
+    gUsed.reset();
+    const auto g2 = streamGate(gUsed, { b.audio }, { 256 }, BreathSettings {});
+    EXPECT_EQ(maxAbsDiff(g2[0], e2[0]), 0.0);
+}
+
+TEST(DenoiseStreamTests, StreamingBreathRemovalAttenuatesBreathsAndLeavesPhrases)
+{
+    for (double rate : { 48000.0, 44100.0 }) {
+        for (const auto& sizes : std::vector<std::vector<size_t> > { { 512 }, { 437 }, { 64, 1000, 5 } }) {
+            const Take t = vocalTake(rate);
+            // stereo: slightly different right channel
+            std::vector<float> right(t.audio);
+            for (auto& v : right) {
+                v *= 0.8f;
+            }
+            StreamBreathGate g(rate, 2);
+            BreathSettings s;
+            const auto out = streamGate(g, { t.audio, right }, sizes, s);
+            EXPECT_EQ(g.undecided(), 0u);
+            EXPECT_EQ(g.breathsStarted(), t.breaths.size()) << rate << " block " << sizes[0];
+            for (const auto& b : t.breaths) {
+                // core of the breath (inside the fades and the 10 ms frame grid)
+                const size_t i0 = size_t((b.first + 0.04) * rate), i1 = size_t((b.second - 0.04) * rate);
+                const double dL = rmsDb(out[0].data(), i0, i1) - rmsDb(t.audio.data(), i0, i1);
+                const double dR = rmsDb(out[1].data(), i0, i1) - rmsDb(right.data(), i0, i1);
+                EXPECT_NEAR(dL, -12.0, 0.5) << rate << " breath at " << b.first;
+                EXPECT_NEAR(dR, -12.0, 0.5);
+            }
+            for (const auto& p : t.phrases) {
+                const size_t i0 = size_t(p.first * rate), i1 = size_t(p.second * rate);
+                std::vector<float> a(t.audio.begin() + i0, t.audio.begin() + i1), o(out[0].begin() + i0,
+                                                                                   out[0].begin() + i1);
+                EXPECT_EQ(maxAbsDiff(a, o), 0.0) << rate << " phrase at " << p.first;
+            }
+            // smooth: no gain step larger than the fade allows
+            double step = 0.0;
+            for (size_t i = 1; i < t.audio.size(); ++i) {
+                if (std::abs(t.audio[i]) > 1e-4f && std::abs(t.audio[i - 1]) > 1e-4f) {
+                    const double g0 = out[0][i - 1] / t.audio[i - 1], g1 = out[0][i] / t.audio[i];
+                    step = std::max(step, std::abs(g1 - g0));
+                }
+            }
+            EXPECT_LT(step, 0.01);
+        }
+    }
+}
+
+TEST(DenoiseStreamTests, StreamingBreathSettingsAreLive)
+{
+    const double rate = 48000.0;
+    const Take t = vocalTake(rate);
+    StreamBreathGate g(rate, 1);
+    BreathSettings early, late;
+    late.silence = true;
+    // switch between the two breaths (the gate's output lags its input by its latency)
+    const size_t switchAt = size_t(3.2 * rate) + g.latency();
+    const auto out = streamGate(g, { t.audio }, { 512 }, early, &late, switchAt);
+    const auto& b1 = t.breaths[0];
+    const auto& b2 = t.breaths[1];
+    auto drop = [&](const std::pair<double, double>& b) {
+        const size_t i0 = size_t((b.first + 0.04) * rate), i1 = size_t((b.second - 0.04) * rate);
+        return rmsDb(out[0].data(), i0, i1) - rmsDb(t.audio.data(), i0, i1);
+    };
+    EXPECT_NEAR(drop(b1), -12.0, 0.5);
+    EXPECT_LT(drop(b2), -60.0);
+}
+
+TEST(DenoiseStreamTests, StreamingBreathRemovalLeavesSpeechAndNoiseAlone)
+{
+    const double rate = 48000.0;
+    std::vector<float> x = phrase(1.5, rate, 1);
+    x.insert(x.end(), size_t(0.4 * rate), 0.0f);
+    auto p2 = phrase(1.5, rate, 2);
+    x.insert(x.end(), p2.begin(), p2.end());
+    StreamBreathGate g(rate, 1);
+    const auto out = streamGate(g, { x }, { 512 }, BreathSettings {});
+    EXPECT_EQ(g.breathsStarted(), 0u);
+    EXPECT_EQ(maxAbsDiff(out[0], x), 0.0);
+
+    std::vector<float> noise(size_t(3 * rate), 0.0f);
+    addNoise(noise, 0.01f, 3);
+    StreamBreathGate g2(rate, 1);
+    streamGate(g2, { noise }, { 512 }, BreathSettings {});
+    EXPECT_EQ(g2.breathsStarted(), 0u);
+}
+
+TEST(DenoiseStreamTests, CpuCostPerBlock)
+{
+    // Not a pass/fail benchmark: prints the cost of one 512-sample block per channel
+    for (double rate : { 48000.0, 44100.0 }) {
+        Take t = vocalTake(rate, 0.02f);
+        const size_t B = 512;
+        const size_t blocks = t.audio.size() / B;
+        std::vector<float> out(t.audio.size());
+        StreamSuppressor st(rate);
+        auto t0 = std::chrono::steady_clock::now();
+        for (size_t b = 0; b < blocks; ++b) {
+            st.process(t.audio.data() + b * B, out.data() + b * B, B, 1.0);
+        }
+        auto t1 = std::chrono::steady_clock::now();
+        StreamBreathGate g(rate, 1);
+        std::vector<float> io(t.audio);
+        for (size_t b = 0; b < blocks; ++b) {
+            float* p = io.data() + b * B;
+            g.process(&p, &p, B, BreathSettings {});
+        }
+        auto t2 = std::chrono::steady_clock::now();
+        const double blockMs = 1000.0 * B / rate;
+        const double ns = std::chrono::duration<double, std::micro>(t1 - t0).count() / blocks;
+        const double bg = std::chrono::duration<double, std::micro>(t2 - t1).count() / blocks;
+        std::printf("[cpu] %.0f Hz, 512-sample block (%.1f ms audio): noise suppression %.0f us (%.1f%% of realtime), "
+                    "breath removal %.0f us (%.1f%%) per channel\n",
+                    rate, blockMs, ns, 100.0 * ns / (blockMs * 1000.0), bg, 100.0 * bg / (blockMs * 1000.0));
+        SUCCEED();
+    }
 }
