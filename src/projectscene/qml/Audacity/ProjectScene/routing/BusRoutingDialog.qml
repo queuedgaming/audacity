@@ -77,8 +77,8 @@ StyledDialogView {
     readonly property int nodeW: 170
     readonly property int nodeH: 40
     readonly property int colTracks: 20
-    readonly property int colBuses: 300
-    readonly property int colMaster: 560
+    readonly property int colBuses: Math.max(colTracks + nodeW + 60, (canvasArea.width - nodeW) / 2)
+    readonly property int colMaster: Math.max(colBuses + nodeW + 60, canvasArea.width - nodeW - 24)
 
     function nodePos(trackId) {
         for (var i = 0; i < graph.tracks.length; ++i) {
@@ -155,7 +155,7 @@ StyledDialogView {
                 }
 
                 FlatRadioButton {
-                    width: 70
+                    width: 90
                     height: 28
                     text: qsTrc("automation", "Output")
                     checked: !root.sendMode
@@ -163,7 +163,7 @@ StyledDialogView {
                 }
 
                 FlatRadioButton {
-                    width: 70
+                    width: 90
                     height: 28
                     text: qsTrc("automation", "Send")
                     checked: root.sendMode
@@ -181,6 +181,8 @@ StyledDialogView {
                 border.color: ui.theme.strokeColor
                 radius: 4
                 clip: true
+
+                onWidthChanged: edges.requestPaint()
 
                 Canvas {
                     id: edges
