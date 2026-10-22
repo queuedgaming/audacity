@@ -15,6 +15,7 @@ set(MODULE_TEST_SRC
 
     ${CMAKE_CURRENT_LIST_DIR}/recordcontroller_tests.cpp
     ${CMAKE_CURRENT_LIST_DIR}/au3record_tests.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/artistmodemodel_tests.cpp
     ${CMAKE_CURRENT_LIST_DIR}/drumsynth.h
     )
 
@@ -24,6 +25,7 @@ set(MODULE_TEST_INCLUDE
 
 set(MODULE_TEST_LINK
     record
+    record_qml
     au3wrap
     au3-track
     au3-wave-track

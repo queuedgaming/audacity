@@ -63,6 +63,21 @@ public:
     virtual void setAutoCompPitchScoring(bool enabled) = 0;
     virtual muse::async::Notification autoCompPitchScoringChanged() const = 0;
 
+    //! Artist Recording Mode: focused performer dashboard over the project window
+    virtual bool artistModeEnabled() const = 0;
+    virtual void setArtistModeEnabled(bool enabled) = 0;
+    virtual muse::async::Notification artistModeEnabledChanged() const = 0;
+
+    //! Artist mode: record with a count-in (lead-in pre-roll of leadInTimeDuration)
+    virtual bool countInEnabled() const = 0;
+    virtual void setCountInEnabled(bool enabled) = 0;
+    virtual muse::async::Notification countInEnabledChanged() const = 0;
+
+    //! Metronome preference (stored; AU4 has no click engine yet)
+    virtual bool metronomeEnabled() const = 0;
+    virtual void setMetronomeEnabled(bool enabled) = 0;
+    virtual muse::async::Notification metronomeEnabledChanged() const = 0;
+
     virtual RecordingTrackNameOptions recordingTrackNameOptions() const = 0;
 };
 }

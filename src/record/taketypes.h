@@ -17,6 +17,14 @@ enum class TakeSwitch {
     AutoComp,  //!< pick the best take per segment automatically (see au3wrap/internal/autocomp.h)
 };
 
+//! Level summary of a recorded clip (Artist mode "Last take")
+struct TakeStats {
+    double duration = 0.0;  //!< seconds
+    double peakDb = -144.0; //!< sample peak, dBFS
+    bool clipped = false;   //!< at least one sample at full scale
+    size_t clippedSamples = 0;
+};
+
 //! Project-level musical key (see au3wrap/internal/projectkey.h)
 struct ProjectKeyInfo {
     int tonic = 0;            //!< pitch class, 0 = C

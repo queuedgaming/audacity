@@ -39,6 +39,15 @@ public:
     MOCK_METHOD(bool, punchOutAtSelectionEnd, (), (const, override));
     MOCK_METHOD(void, setPunchOutAtSelectionEnd, (bool), (override));
     MOCK_METHOD(muse::async::Notification, punchOutAtSelectionEndChanged, (), (const, override));
+    MOCK_METHOD(bool, artistModeEnabled, (), (const, override));
+    MOCK_METHOD(void, setArtistModeEnabled, (bool), (override));
+    MOCK_METHOD(muse::async::Notification, artistModeEnabledChanged, (), (const, override));
+    MOCK_METHOD(bool, countInEnabled, (), (const, override));
+    MOCK_METHOD(void, setCountInEnabled, (bool), (override));
+    MOCK_METHOD(muse::async::Notification, countInEnabledChanged, (), (const, override));
+    MOCK_METHOD(bool, metronomeEnabled, (), (const, override));
+    MOCK_METHOD(void, setMetronomeEnabled, (bool), (override));
+    MOCK_METHOD(muse::async::Notification, metronomeEnabledChanged, (), (const, override));
 
     MOCK_METHOD(RecordingTrackNameOptions, recordingTrackNameOptions, (), (const, override));
 };

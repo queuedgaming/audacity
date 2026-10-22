@@ -43,6 +43,10 @@ void RecordCommandsState::init()
         updateCommandStates({ RECORD_TOGGLE_INPUT_MONITORING_COMMAND });
     });
 
+    configuration()->artistModeEnabledChanged().onNotify(this, [this]() {
+        updateCommandStates({ RECORD_TOGGLE_ARTIST_MODE_COMMAND });
+    });
+
     // Take and key commands depend on the focused / selected track and the time selection
     if (selectionController()) {
         selectionController()->selectedTracksChanged().onReceive(this, [this](const auto&) { updateTrackCommandStates(); });
@@ -111,6 +115,9 @@ CommandState RecordCommandsState::commandState(const Command& command) const
     }
     if (command == RECORD_COMP_TAKE_SELECTION_COMMAND) {
         return CommandState(controller()->canSwitchTake(TakeSwitch::CompSelection));
+    }
+    if (command == RECORD_TOGGLE_ARTIST_MODE_COMMAND) {
+        return CommandState(true, configuration()->artistModeEnabled());
     }
     if (command == RECORD_DETECT_KEY_COMMAND) {
         return CommandState(controller()->canDetectKey());

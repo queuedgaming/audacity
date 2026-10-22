@@ -841,6 +841,10 @@
         <seq>Shift+D</seq>
     </SC>
     <SC>
+        <key>action://record/toggle-artist-mode</key>
+        <seq>Ctrl+Alt+R</seq>
+    </SC>
+    <SC>
         <key>action://record/next-take</key>
         <seq>Alt+]</seq>
     </SC>

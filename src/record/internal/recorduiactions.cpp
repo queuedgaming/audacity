@@ -148,6 +148,15 @@ const UiActionList RecordUiActions::m_mainActions = {
              //: Action description: shown as a tooltip; can be a full sentence
              TranslatableString("action_description", "Estimate the key, scale and tuning of the selection or focused track and store it as the project key")
              ),
+    UiAction("action://record/toggle-artist-mode",
+             au::context::UiCtxProjectOpened,
+             au::context::CTX_ANY,
+             //: Action title: shown as a menu item or a button label; keep it short
+             TranslatableString("action", "Artist recording mode"),
+             //: Action description: shown as a tooltip; can be a full sentence
+             TranslatableString("action_description", "Show a focused recording dashboard for performers"),
+             Checkable::Yes
+             ),
     UiAction("record-on-current-track",
              au::context::UiCtxProjectOpened,
              au::context::CTX_PROJECT_OPENED,
@@ -200,6 +209,10 @@ void RecordUiActions::init()
     m_controller->isInputMonitoringOnChanged().onNotify(this, [this]() {
         m_actionCheckedChanged.send(ActionCodeList { RECORD_TOGGLE_INPUT_MONITORING.toString() });
     });
+
+    recordConfiguration()->artistModeEnabledChanged().onNotify(this, [this]() {
+        m_actionCheckedChanged.send(ActionCodeList { "action://record/toggle-artist-mode" });
+    });
 }
 
 const UiActionList& RecordUiActions::actionsList() const
@@ -218,6 +231,9 @@ bool RecordUiActions::actionEnabled(const UiAction& act) const
 
 bool RecordUiActions::actionChecked(const UiAction& act) const
 {
+    if (act.code == "action://record/toggle-artist-mode") {
+        return recordConfiguration()->artistModeEnabled();
+    }
     if (act.code == RECORD_TOGGLE_MIC_METERING.toString()) {
         return m_controller->isMicMeteringOn();
     }

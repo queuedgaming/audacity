@@ -16,6 +16,9 @@ const muse::Settings::Key CROSSFADE_DURATION_KEY("record", "record/crossfadeDura
 const muse::Settings::Key KEEP_TAKES_KEY("record", "record/keepTakesWhenRecordingOver");
 const muse::Settings::Key AUTOCOMP_SEGMENT_KEY("record", "record/autoCompSegmentLength");
 const muse::Settings::Key AUTOCOMP_PITCH_KEY("record", "record/autoCompPitchScoring");
+const muse::Settings::Key ARTIST_MODE_KEY("record", "record/artistMode");
+const muse::Settings::Key COUNT_IN_KEY("record", "record/artistCountIn");
+const muse::Settings::Key METRONOME_KEY("record", "record/metronome");
 const muse::Settings::Key PUNCH_OUT_AT_SELECTION_END_KEY("record", "record/punchOutAtSelectionEnd");
 
 //! NOTE: these keys deliberately match the au3 preference paths (bridged to the
@@ -66,6 +69,18 @@ void RecordConfiguration::init()
     muse::settings()->setDefaultValue(PUNCH_OUT_AT_SELECTION_END_KEY, muse::Val(true));
     muse::settings()->valueChanged(PUNCH_OUT_AT_SELECTION_END_KEY).onReceive(nullptr, [this](const muse::Val&) {
         m_punchOutAtSelectionEndChanged.notify();
+    });
+    muse::settings()->setDefaultValue(ARTIST_MODE_KEY, muse::Val(false));
+    muse::settings()->valueChanged(ARTIST_MODE_KEY).onReceive(nullptr, [this](const muse::Val&) {
+        m_artistModeEnabledChanged.notify();
+    });
+    muse::settings()->setDefaultValue(COUNT_IN_KEY, muse::Val(false));
+    muse::settings()->valueChanged(COUNT_IN_KEY).onReceive(nullptr, [this](const muse::Val&) {
+        m_countInEnabledChanged.notify();
+    });
+    muse::settings()->setDefaultValue(METRONOME_KEY, muse::Val(false));
+    muse::settings()->valueChanged(METRONOME_KEY).onReceive(nullptr, [this](const muse::Val&) {
+        m_metronomeEnabledChanged.notify();
     });
 }
 
@@ -198,4 +213,49 @@ void RecordConfiguration::setAutoCompPitchScoring(bool enabled)
 muse::async::Notification RecordConfiguration::autoCompPitchScoringChanged() const
 {
     return m_autoCompPitchScoringChanged;
+}
+
+bool RecordConfiguration::artistModeEnabled() const
+{
+    return muse::settings()->value(ARTIST_MODE_KEY).toBool();
+}
+
+void RecordConfiguration::setArtistModeEnabled(bool enabled)
+{
+    muse::settings()->setSharedValue(ARTIST_MODE_KEY, muse::Val(enabled));
+}
+
+muse::async::Notification RecordConfiguration::artistModeEnabledChanged() const
+{
+    return m_artistModeEnabledChanged;
+}
+
+bool RecordConfiguration::countInEnabled() const
+{
+    return muse::settings()->value(COUNT_IN_KEY).toBool();
+}
+
+void RecordConfiguration::setCountInEnabled(bool enabled)
+{
+    muse::settings()->setSharedValue(COUNT_IN_KEY, muse::Val(enabled));
+}
+
+muse::async::Notification RecordConfiguration::countInEnabledChanged() const
+{
+    return m_countInEnabledChanged;
+}
+
+bool RecordConfiguration::metronomeEnabled() const
+{
+    return muse::settings()->value(METRONOME_KEY).toBool();
+}
+
+void RecordConfiguration::setMetronomeEnabled(bool enabled)
+{
+    muse::settings()->setSharedValue(METRONOME_KEY, muse::Val(enabled));
+}
+
+muse::async::Notification RecordConfiguration::metronomeEnabledChanged() const
+{
+    return m_metronomeEnabledChanged;
 }

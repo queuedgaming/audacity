@@ -12,6 +12,7 @@
 
 #include "context/iglobalcontext.h"
 #include "record/irecordcontroller.h"
+#include "record/irecordconfiguration.h"
 #include "trackedit/iselectioncontroller.h"
 #include "trackedit/internal/itracknavigationcontroller.h"
 
@@ -21,6 +22,7 @@ class RecordCommandsState : public muse::rcommand::IModuleCommandsState, public 
     muse::GlobalInject<muse::rcommand::ICommandsRegister> commandsRegister;
     muse::ContextInject<au::context::IGlobalContext> globalContext{ this };
     muse::ContextInject<IRecordController> controller{ this };
+    muse::GlobalInject<IRecordConfiguration> configuration;
     muse::ContextInject<trackedit::ISelectionController> selectionController{ this };
     muse::ContextInject<trackedit::ITrackNavigationController> trackNavigationController{ this };
 

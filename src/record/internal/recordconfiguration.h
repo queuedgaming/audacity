@@ -47,6 +47,15 @@ public:
     bool punchOutAtSelectionEnd() const override;
     void setPunchOutAtSelectionEnd(bool enabled) override;
     muse::async::Notification punchOutAtSelectionEndChanged() const override;
+    bool artistModeEnabled() const override;
+    void setArtistModeEnabled(bool enabled) override;
+    muse::async::Notification artistModeEnabledChanged() const override;
+    bool countInEnabled() const override;
+    void setCountInEnabled(bool enabled) override;
+    muse::async::Notification countInEnabledChanged() const override;
+    bool metronomeEnabled() const override;
+    void setMetronomeEnabled(bool enabled) override;
+    muse::async::Notification metronomeEnabledChanged() const override;
 
     RecordingTrackNameOptions recordingTrackNameOptions() const override;
 
@@ -56,6 +65,9 @@ private:
     muse::async::Notification m_leadInTimeDurationChanged;
     muse::async::Notification m_crossfadeDurationChanged;
     muse::async::Notification m_punchOutAtSelectionEndChanged;
+    muse::async::Notification m_artistModeEnabledChanged;
+    muse::async::Notification m_countInEnabledChanged;
+    muse::async::Notification m_metronomeEnabledChanged;
     muse::async::Notification m_keepTakesChanged;
     muse::async::Notification m_autoCompSegmentLengthChanged;
     muse::async::Notification m_autoCompPitchScoringChanged;

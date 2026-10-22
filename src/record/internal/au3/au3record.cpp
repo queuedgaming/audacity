@@ -1431,6 +1431,52 @@ muse::Ret Au3Record::sliceToGrid(const trackedit::ClipKey& key, int division)
     return make_ok();
 }
 
+int Au3Record::takeCount(const trackedit::TrackId& trackId) const
+{
+    Au3Project& project = projectRef();
+    Au3WaveTrack* track = DomAccessor::findWaveTrack(project, ::TrackId(trackId));
+    if (!track) {
+        return 0;
+    }
+    WaveTrack* main = au::au3::takelanes::mainOf(project, *track);
+    return int(au::au3::takelanes::takesOf(project, main ? *main : *track).size());
+}
+
+std::optional<TakeStats> Au3Record::clipStats(const trackedit::ClipKey& key) const
+{
+    Au3Project& project = projectRef();
+    Au3WaveTrack* track = DomAccessor::findWaveTrack(project, ::TrackId(key.trackId));
+    auto clip = track ? DomAccessor::findWaveClip(track, key.itemId) : nullptr;
+    if (!clip) {
+        return std::nullopt;
+    }
+    TakeStats st;
+    st.duration = clip->GetPlayDuration();
+    const auto s0 = track->TimeToLongSamples(clip->GetPlayStartTime());
+    const auto s1 = track->TimeToLongSamples(clip->GetPlayEndTime());
+    constexpr size_t block = 65536;
+    std::vector<float> buf(block);
+    float peak = 0.0f;
+    for (size_t c = 0; c < track->NChannels(); ++c) {
+        for (auto s = s0; s < s1; s += block) {
+            const size_t len = size_t(std::min<long long>(block, (s1 - s).as_long_long()));
+            float* b[] { buf.data() };
+            track->GetFloats(c, 1, b, s, len, false, FillFormat::fillZero, false);
+            for (size_t i = 0; i < len; ++i) {
+                const float a = std::abs(buf[i]);
+                peak = std::max(peak, a);
+                // a full-scale sample: what an overdriven input or converter delivers
+                if (a >= 0.999f) {
+                    ++st.clippedSamples;
+                }
+            }
+        }
+    }
+    st.peakDb = peak > 0 ? 20.0 * std::log10(double(peak)) : -144.0;
+    st.clipped = st.clippedSamples > 0;
+    return st;
+}
+
 muse::async::Notification Au3Record::projectKeyChanged() const
 {
     return ProjectKey::Get(projectRef()).keyChanged();

@@ -142,6 +142,15 @@ const std::vector<CommandInfo> s_commandInfos = {
         Decoration()
     },
     CommandInfo{
+        RECORD_TOGGLE_ARTIST_MODE_COMMAND,
+        //: Command title: shown as a menu item or a button label; keep it short
+        TranslatableString("command", "Artist recording mode"),
+        //: Command description: shown as a tooltip; can be a full sentence
+        TranslatableString("command_description", "Show a focused recording dashboard for performers"),
+        InputSchema(),
+        Decoration(rcommand::Checkable::Yes)
+    },
+    CommandInfo{
         RECORD_DETECT_KEY_COMMAND,
         //: Command title: shown as a menu item or a button label; keep it short
         TranslatableString("command", "Detect key"),

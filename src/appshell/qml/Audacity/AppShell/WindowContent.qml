@@ -28,6 +28,7 @@ import Muse.Ui
 import Muse.UiComponents
 
 import Audacity.AppShell
+import Audacity.Record
 
 DockWindow {
     id: root
@@ -86,6 +87,13 @@ DockWindow {
             }
         }
     ]
+
+    //! Artist recording mode: drawn over the docked layout, which stays as it is underneath
+    ArtistDashboard {
+        anchors.fill: parent
+        z: 1000
+        allowed: String(root.currentPageUri).indexOf("project") >= 0
+    }
 
     pages: [
         HomePage {

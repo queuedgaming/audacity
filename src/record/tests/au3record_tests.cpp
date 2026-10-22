@@ -435,6 +435,9 @@ TEST_F(Au3RecordTests, TakeLanesNumberSuccessivePasses)
     ASSERT_EQ(takes.size(), 2u);
     EXPECT_EQ(TakeLaneInfo::Get(*takes[0]).takeIndex, 1);
     EXPECT_EQ(TakeLaneInfo::Get(*takes[1]).takeIndex, 2);
+    //! the count the Artist mode dashboard shows, from the main track or any of its takes
+    EXPECT_EQ(m_record->takeCount(main->GetId()), 2);
+    EXPECT_EQ(m_record->takeCount(takes[1]->GetId()), 2);
 }
 
 TEST_F(Au3RecordTests, TakeLanesNothingPreservedWhenRecordingPastTheEnd)
@@ -2060,5 +2063,37 @@ TEST_F(Au3RecordTests, SliceAndQuantizeMovesSlicesToTheGrid)
     const auto half = t2->SortedIntervalArray();
     ASSERT_EQ(half.size(), loop.hits.size() + 1);
     EXPECT_NEAR(half[1]->GetPlayStartTime(), 0.5 + 0.014, 0.003);
+}
+
+TEST_F(Au3RecordTests, ClipStatsReportDurationPeakAndClipping)
+{
+    //! [GIVEN] a 1 s take peaking at -6 dBFS
+    std::vector<float> x(size_t(TEST_SAMPLE_RATE), 0.0f);
+    for (size_t i = 0; i < x.size(); ++i) {
+        x[i] = 0.5f * float(std::sin(2 * M_PI * 440.0 * i / TEST_SAMPLE_RATE));
+    }
+    Au3WaveTrack* track = addSamplesTrack(x);
+    auto clip = *track->Intervals().begin();
+    auto st = m_record->clipStats({ track->GetId(), clip->GetId() });
+    ASSERT_TRUE(st);
+    EXPECT_NEAR(st->duration, 1.0, 1e-6);
+    EXPECT_NEAR(st->peakDb, -6.02, 0.05);
+    EXPECT_FALSE(st->clipped);
+
+    //! [GIVEN] the same take driven into full scale for 30 samples
+    for (size_t i = 1000; i < 1030; ++i) {
+        x[i] = i % 2 ? -1.0f : 1.0f;
+    }
+    Au3WaveTrack* hot = addSamplesTrack(x);
+    st = m_record->clipStats({ hot->GetId(), (*hot->Intervals().begin())->GetId() });
+    ASSERT_TRUE(st);
+    EXPECT_TRUE(st->clipped);
+    EXPECT_EQ(st->clippedSamples, 30u);
+    EXPECT_NEAR(st->peakDb, 0.0, 1e-6);
+
+    //! unknown clip
+    EXPECT_FALSE(m_record->clipStats({ track->GetId(), 987654 }));
+    //! a track without take lanes
+    EXPECT_EQ(m_record->takeCount(track->GetId()), 0);
 }
 }

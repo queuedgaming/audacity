@@ -66,6 +66,8 @@ public:
     std::string projectKeyLabel(const std::optional<ProjectKeyInfo>& key) const override;
     std::string lastAutoCompKey() const override { return m_lastAutoCompKey; }
     muse::Ret setClipFades(const trackedit::ClipKey& clip, double fadeIn, double fadeOut, int curve) override;
+    int takeCount(const trackedit::TrackId& track) const override;
+    std::optional<TakeStats> clipStats(const trackedit::ClipKey& clip) const override;
     muse::Ret detectTransients(const trackedit::ClipKey& clip, double sensitivity, bool toLabelTrack) override;
     muse::Ret clearTransients(const trackedit::ClipKey& clip) override;
     muse::Ret sliceAtTransients(const trackedit::ClipKey& clip, double quantizeStrength, int quantizeDivision) override;

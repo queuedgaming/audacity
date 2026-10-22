@@ -52,6 +52,10 @@ void RecordController::init()
     cd->onRequest(this, RECORD_COMP_TAKE_SELECTION_COMMAND, [this]() { return switchTake(TakeSwitch::CompSelection); });
     cd->onRequest(this, RECORD_AUTO_COMP_COMMAND, [this]() { return switchTake(TakeSwitch::AutoComp); });
     cd->onRequest(this, RECORD_DETECT_KEY_COMMAND, [this]() { return detectKey(); });
+    cd->onRequest(this, RECORD_TOGGLE_ARTIST_MODE_COMMAND, [this]() {
+        configuration()->setArtistModeEnabled(!configuration()->artistModeEnabled());
+        return muse::make_ok();
+    });
 
     static const std::vector<ActionToCommand> actionToCommand = {
         { RECORD_START_QUERY.toString(), RECORD_START_COMMAND, {} },
@@ -68,6 +72,7 @@ void RecordController::init()
         { RECORD_COMP_TAKE_SELECTION_QUERY.toString(), RECORD_COMP_TAKE_SELECTION_COMMAND, {} },
         { RECORD_AUTO_COMP_QUERY.toString(), RECORD_AUTO_COMP_COMMAND, {} },
         { RECORD_DETECT_KEY_QUERY.toString(), RECORD_DETECT_KEY_COMMAND, {} },
+        { "action://record/toggle-artist-mode", RECORD_TOGGLE_ARTIST_MODE_COMMAND, {} },
     };
     registerActionToCommand(this, actionToCommand, commandDispatcher(), dispatcher());
 
