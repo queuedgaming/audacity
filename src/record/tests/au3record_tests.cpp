@@ -3107,4 +3107,323 @@ TEST_F(PluginAutomationTests, PluginLanesSaveByStableParameterIds)
     EXPECT_NE(xml.find(wxT("param=\"gain\"")), wxString::npos);
     EXPECT_NE(xml.find(wxT("effect=\"au-test:vst3-autogain\"")), wxString::npos);
 }
+
+// ---- bus routing ---------------------------------------------------------------------------
+}
+
+#include "au3-mixer/BusRouting.h"
+#include "au3wrap/internal/busrouting.h"
+
+namespace au::record {
+namespace {
+namespace br = au::au3::busrouting;
+using au::au3::BusRoutingData;
+
+std::vector<const WideSampleSequence*> seqsOf(std::initializer_list<const Au3WaveTrack*> tracks)
+{
+    std::vector<const WideSampleSequence*> v;
+    for (auto* t : tracks) {
+        v.push_back(t);
+    }
+    return v;
+}
+
+const std::string& busIdOf(const Au3WaveTrack& t)
+{
+    return BusRoutingData::Get(t).busId;
+}
+}
+
+TEST_F(Au3RecordTests, BusRoutingDefaultsLeaveTheMixUnchanged)
+{
+    Au3WaveTrack* a = addSelectedMonoTrack();
+    Au3WaveTrack* b = addSelectedMonoTrack();
+    const auto plan = br::makePlan(seqsOf({ a, b }));
+    ASSERT_EQ(plan.nodes.size(), 2u);
+    EXPECT_FALSE(plan.Active());
+    EXPECT_TRUE(BusRoutingData::Get(*a).isDefault());
+
+    // default data writes nothing into the project
+    XMLStringWriter xml;
+    a->WriteXML(xml);
+    EXPECT_EQ(xml.find(wxT("<busrouting")), wxString::npos);
+}
+
+TEST_F(Au3RecordTests, BusRoutingPlanRoutesOutputsAndSendsInDependencyOrder)
+{
+    Au3WaveTrack* src = addSelectedMonoTrack();
+    Au3WaveTrack* drums = br::addBusTrack(projectRef());
+    Au3WaveTrack* reverb = br::addBusTrack(projectRef());
+    ASSERT_TRUE(drums && reverb);
+    EXPECT_EQ(drums->NChannels(), 2u);
+    EXPECT_TRUE(br::isBus(*drums));
+    EXPECT_NE(busIdOf(*drums), busIdOf(*reverb));
+    EXPECT_EQ(br::buses(projectRef()).size(), 2u);
+    EXPECT_EQ(br::findBus(projectRef(), busIdOf(*reverb)), reverb);
+
+    ASSERT_TRUE(br::setOutput(projectRef(), *src, busIdOf(*drums)));
+    ASSERT_TRUE(br::setSend(projectRef(), *src, busIdOf(*reverb), 0.25f));
+    ASSERT_TRUE(br::setSend(projectRef(), *drums, busIdOf(*reverb), 0.5f));
+    // a send to the output bus is refused (it would double the signal)
+    EXPECT_FALSE(br::setSend(projectRef(), *src, busIdOf(*drums), 0.5f));
+    // updating an existing send keeps one entry
+    ASSERT_TRUE(br::setSend(projectRef(), *src, busIdOf(*reverb), 0.3f));
+    ASSERT_EQ(BusRoutingData::Get(*src).sends.size(), 1u);
+
+    // sequences given in an order where the reverb bus comes before the drum bus feeding it
+    const auto plan = br::makePlan(seqsOf({ reverb, src, drums }));
+    ASSERT_EQ(plan.nodes.size(), 3u);
+    EXPECT_TRUE(plan.Active());
+    EXPECT_TRUE(plan.nodes[0].isBus);
+    EXPECT_FALSE(plan.nodes[1].isBus);
+    EXPECT_EQ(plan.nodes[1].target, 2);
+    ASSERT_EQ(plan.nodes[1].sends.size(), 1u);
+    EXPECT_EQ(plan.nodes[1].sends[0].dest, 0);
+    EXPECT_FLOAT_EQ(plan.nodes[1].sends[0].level, 0.3f);
+    EXPECT_EQ(plan.nodes[2].target, -1);
+    ASSERT_EQ(plan.nodes[2].sends.size(), 1u);
+    EXPECT_EQ(plan.nodes[0].target, -1);
+    EXPECT_EQ(plan.busOrder, (std::vector<int> { 2, 0 }));
+    EXPECT_EQ(plan.ProcessingOrder(), (std::vector<int> { 1, 2, 0 }));
+
+    // a bus that is not part of the mix (e.g. playing selected tracks only) falls back to master
+    const auto partial = br::makePlan(seqsOf({ src }));
+    EXPECT_EQ(partial.nodes[0].target, -1);
+    EXPECT_TRUE(partial.nodes[0].sends.empty());
+    EXPECT_FALSE(partial.nodes[0].muted);
+    drums->SetMute(true);
+    EXPECT_TRUE(br::makePlan(seqsOf({ src })).nodes[0].muted); // ...unless that bus is muted
+}
+
+TEST_F(Au3RecordTests, BusRoutingRefusesCycles)
+{
+    Au3WaveTrack* src = addSelectedMonoTrack();
+    Au3WaveTrack* b1 = br::addBusTrack(projectRef());
+    Au3WaveTrack* b2 = br::addBusTrack(projectRef());
+    Au3WaveTrack* b3 = br::addBusTrack(projectRef());
+
+    EXPECT_FALSE(br::setOutput(projectRef(), *b1, busIdOf(*b1)));       // itself
+    EXPECT_FALSE(br::setOutput(projectRef(), *src, "no-such-bus"));    // unknown
+    ASSERT_TRUE(br::setOutput(projectRef(), *b1, busIdOf(*b2)));
+    ASSERT_TRUE(br::setSend(projectRef(), *b2, busIdOf(*b3), 1.0f));
+    EXPECT_TRUE(br::createsCycle(projectRef(), *b3, busIdOf(*b1)));
+    EXPECT_FALSE(br::setOutput(projectRef(), *b3, busIdOf(*b1)));       // b1->b2->b3->b1
+    EXPECT_FALSE(br::setSend(projectRef(), *b3, busIdOf(*b1), 0.5f));
+    EXPECT_FALSE(br::setOutput(projectRef(), *b2, busIdOf(*b1)));
+    EXPECT_FALSE(br::createsCycle(projectRef(), *src, busIdOf(*b1)));  // plain tracks have no inputs
+    EXPECT_TRUE(br::setOutput(projectRef(), *src, busIdOf(*b1)));
+    EXPECT_TRUE(BusRoutingData::Get(*b3).outputBusId.empty());
+
+    // a cycle smuggled into the data (old or hand-edited project) is broken when mixing
+    BusRoutingData::Get(*b3).outputBusId = busIdOf(*b1);
+    const auto plan = br::makePlan(seqsOf({ src, b1, b2, b3 }));
+    EXPECT_EQ(plan.busOrder.size(), 3u); // every bus still processed exactly once
+    int edgesIntoB1FromB3 = plan.nodes[3].target == 1 ? 1 : 0;
+    EXPECT_EQ(edgesIntoB1FromB3, 0);
+}
+
+TEST_F(Au3RecordTests, BusRoutingIsSavedWithTheTrack)
+{
+    Au3WaveTrack* src = addSelectedMonoTrack();
+    Au3WaveTrack* bus = br::addBusTrack(projectRef());
+    Au3WaveTrack* fx = br::addBusTrack(projectRef());
+    ASSERT_TRUE(br::setOutput(projectRef(), *src, busIdOf(*bus)));
+    ASSERT_TRUE(br::setSend(projectRef(), *src, busIdOf(*fx), 0.125f));
+
+    XMLStringWriter trackXml;
+    src->WriteXML(trackXml);
+    EXPECT_NE(trackXml.find(wxT("<busrouting")), wxString::npos);
+
+    auto roundTrip = [](const BusRoutingData& data) {
+        struct Wrap : XMLTagHandler {
+            BusRoutingData data;
+            bool HandleXMLTag(const std::string_view&, const AttributesList&) override { return true; }
+            XMLTagHandler* HandleXMLChild(const std::string_view& tag) override
+            {
+                return tag == BusRoutingData::XMLTag() ? &data : nullptr;
+            }
+        } wrap;
+        XMLStringWriter xml;
+        xml.StartTag(wxT("wrap"));
+        data.WriteXML(xml);
+        xml.EndTag(wxT("wrap"));
+        XMLFileReader reader;
+        EXPECT_TRUE(reader.ParseString(&wrap, xml));
+        return wrap.data;
+    };
+    const auto s = roundTrip(BusRoutingData::Get(*src));
+    EXPECT_FALSE(s.isBus);
+    EXPECT_EQ(s.outputBusId, busIdOf(*bus));
+    ASSERT_EQ(s.sends.size(), 1u);
+    EXPECT_EQ(s.sends[0].busId, busIdOf(*fx));
+    EXPECT_FLOAT_EQ(s.sends[0].level, 0.125f);
+    const auto b = roundTrip(BusRoutingData::Get(*bus));
+    EXPECT_TRUE(b.isBus);
+    EXPECT_EQ(b.busId, busIdOf(*bus));
+
+    // copies of a track (clipboard, undo states) keep the routing
+    auto copy = src->Duplicate();
+    const auto& c = BusRoutingData::Get(*static_cast<Au3WaveTrack*>(copy.get()));
+    EXPECT_EQ(c.outputBusId, busIdOf(*bus));
+    EXPECT_EQ(c.sends.size(), 1u);
+}
+
+TEST_F(Au3RecordTests, BusRoutingEditsAreUndoable)
+{
+    Au3WaveTrack* src = addSelectedMonoTrack();
+    const auto srcId = src->GetId();
+    auto& history = ::ProjectHistory::Get(projectRef());
+    history.InitialState();
+
+    Au3WaveTrack* bus = br::addBusTrack(projectRef());
+    const std::string busId = busIdOf(*bus);
+    history.PushState(::TranslatableString::untranslatable(wxString("Add bus")),
+                      ::TranslatableString::untranslatable(wxString("Add bus")));
+    src = DomAccessor::findWaveTrack(projectRef(), srcId);
+    ASSERT_TRUE(br::setOutput(projectRef(), *src, busId));
+    history.PushState(::TranslatableString::untranslatable(wxString("Route")),
+                      ::TranslatableString::untranslatable(wxString("Route")));
+
+    auto undo = [&] {
+        UndoManager::Get(projectRef()).Undo([&history](const UndoStackElem& elem) { history.PopState(elem.state); });
+    };
+    undo();
+    EXPECT_TRUE(BusRoutingData::Get(*DomAccessor::findWaveTrack(projectRef(), srcId)).outputBusId.empty());
+    EXPECT_EQ(br::buses(projectRef()).size(), 1u);
+    undo();
+    EXPECT_TRUE(br::buses(projectRef()).empty());
+    UndoManager::Get(projectRef()).Redo([&history](const UndoStackElem& elem) { history.PopState(elem.state); });
+    UndoManager::Get(projectRef()).Redo([&history](const UndoStackElem& elem) { history.PopState(elem.state); });
+    EXPECT_EQ(BusRoutingData::Get(*DomAccessor::findWaveTrack(projectRef(), srcId)).outputBusId, busId);
+    ASSERT_EQ(br::buses(projectRef()).size(), 1u);
+    EXPECT_EQ(busIdOf(*br::buses(projectRef())[0]), busId);
+}
+
+TEST_F(Au3RecordTests, BusRouteBlockSumsThroughBusesWithoutAllocating)
+{
+    // playback path: per-sequence buffers, bus processing callback (here: x2 gain)
+    Au3WaveTrack* a = addSelectedMonoTrack();
+    Au3WaveTrack* b = addSelectedMonoTrack();
+    Au3WaveTrack* bus = br::addBusTrack(projectRef());
+    Au3WaveTrack* fx = br::addBusTrack(projectRef());
+    ASSERT_TRUE(br::setOutput(projectRef(), *a, busIdOf(*bus)));
+    ASSERT_TRUE(br::setSend(projectRef(), *b, busIdOf(*fx), 0.5f));
+    ASSERT_TRUE(br::setOutput(projectRef(), *fx, busIdOf(*bus)));
+    a->SetPan(0.0f);
+    bus->SetVolume(0.5f);
+
+    const auto plan = br::makePlan(seqsOf({ a, b, bus, fx }));
+    const auto order = plan.ProcessingOrder();
+    const size_t len = 64;
+    // channels: a(1) b(1) bus(2) fx(2)
+    std::vector<std::vector<float> > buf(6, std::vector<float>(len, 0.0f));
+    std::fill(buf[0].begin(), buf[0].end(), 0.2f);  // a
+    std::fill(buf[1].begin(), buf[1].end(), 0.4f);  // b
+    float* channels[6];
+    for (int i = 0; i < 6; ++i) {
+        channels[i] = buf[size_t(i)].data();
+    }
+    const unsigned first[] = { 0, 1, 2, 4 };
+    const unsigned nch[] = { 1, 1, 2, 2 };
+    const WideSampleSequence* seqs[] = { a, b, bus, fx };
+    std::vector<float> m0(len, 0.0f), m1(len, 0.0f);
+    float* master[] = { m0.data(), m1.data() };
+    int processed[4] {};
+
+    gCountedAllocs = 0;
+    tCountAllocs = true;
+    BusRouteBlock(plan, order, seqs, channels, first, nch, master, 2, len,
+                  [](void* ctx, int busIndex, float* const* ch, unsigned n, size_t l) {
+        static_cast<int*>(ctx)[busIndex]++;
+        for (unsigned c = 0; c < n; ++c) {
+            for (size_t i = 0; i < l; ++i) {
+                ch[c][i] *= 2.0f;
+            }
+        }
+    }, processed);
+    tCountAllocs = false;
+    EXPECT_EQ(gCountedAllocs.load(), 0);
+    EXPECT_EQ(processed[2], 1);
+    EXPECT_EQ(processed[3], 1);
+    EXPECT_EQ(processed[0] + processed[1], 0);
+
+    // mono track volume per channel (pan law of the sequence)
+    const float va = a->GetChannelVolume(0);
+    const float vb = b->GetChannelVolume(0);
+    // fx = 0.4*vb*0.5 (send) -> x2 ; bus = 0.2*va + fx*1 -> x2 ; master = bus*0.5 (bus volume) + b*vb (b output)
+    const float fxOut = 0.4f * vb * 0.5f * 2.0f;
+    const float busOut = (0.2f * va + fxOut) * 2.0f;
+    const float expected = busOut * bus->GetChannelVolume(0) + 0.4f * vb;
+    EXPECT_NEAR(m0[10], expected, 1e-5);
+    EXPECT_NEAR(m1[len - 1], busOut * bus->GetChannelVolume(1) + 0.4f * b->GetChannelVolume(1), 1e-5);
+}
+
+namespace {
+std::vector<float> renderMix(Au3Project& project, double rate, double seconds, unsigned channels = 1)
+{
+    auto mixer = ExportPluginHelpers::CreateMixer(project, false, 0.0, seconds, channels, 4096, false, rate,
+                                                  floatSample, nullptr);
+    std::vector<float> out;
+    while (auto n = mixer->Process()) {
+        for (unsigned c = 0; c < channels; ++c) {
+            (void)c;
+        }
+        auto p = reinterpret_cast<const float*>(mixer->GetBuffer(0));
+        out.insert(out.end(), p, p + n);
+    }
+    return out;
+}
+}
+
+TEST_F(Au3RecordTests, BusRoutingAppliesInExportWithBusEffectsVolumeAndSends)
+{
+    RealtimeEffectState::EffectFactory::Scope scope { &builtinFactory };
+    Au3WaveTrack* track = addSelectedMonoTrack();
+    const double rate = track->GetRate();
+    auto tone = monoSine(size_t(2 * rate), rate);
+    track->Append(0, reinterpret_cast<constSamplePtr>(tone.data()), floatSample, tone.size());
+    track->Flush();
+
+    const auto direct = renderMix(projectRef(), rate, 2.0);
+    ASSERT_GE(direct.size(), size_t(1.9 * rate));
+    const double directDb = windowDb(direct, rate, 0.5, 1.5);
+
+    // An empty bus changes nothing until something is routed into it
+    Au3WaveTrack* bus = br::addBusTrack(projectRef());
+    EXPECT_NEAR(windowDb(renderMix(projectRef(), rate, 2.0), rate, 0.5, 1.5), directDb, 0.01);
+
+    // Routed through the bus at -6 dB bus volume
+    ASSERT_TRUE(br::setOutput(projectRef(), *track, busIdOf(*bus)));
+    bus->SetVolume(0.5f);
+    EXPECT_NEAR(windowDb(renderMix(projectRef(), rate, 2.0), rate, 0.5, 1.5), directDb - 6.02, 0.1);
+
+    // The bus's own realtime effect runs on the sum: compressor makeup +12 dB on the bus
+    auto state = addEffect(RealtimeEffectList::Get(*bus), kCompressorId);
+    state->GetAccess()->ModifySettings([](EffectSettings& settings) {
+        auto* c = settings.cast<CompressorSettings>();
+        c->makeupGainDb = 12.0;
+        c->lookaheadMs = 0.0; // bus effect latency is not compensated (see limitations)
+        return nullptr;
+    });
+    state->GetAccess()->Flush();
+    EXPECT_NEAR(windowDb(renderMix(projectRef(), rate, 2.0), rate, 0.5, 1.5), directDb - 6.02 + 12.0, 0.5);
+    RealtimeEffectList::Get(*bus).RemoveState(state);
+
+    // Post-fader send at 0.5 to a second bus, both buses to master at unity: level x1.5
+    bus->SetVolume(1.0f);
+    Au3WaveTrack* fx = br::addBusTrack(projectRef());
+    ASSERT_TRUE(br::setSend(projectRef(), *track, busIdOf(*fx), 0.5f));
+    EXPECT_NEAR(windowDb(renderMix(projectRef(), rate, 2.0), rate, 0.5, 1.5), directDb + 20 * std::log10(1.5), 0.1);
+
+    // Bus into bus: fx -> bus, so the send now goes through both
+    ASSERT_TRUE(br::setOutput(projectRef(), *fx, busIdOf(*bus)));
+    bus->SetVolume(0.5f);
+    EXPECT_NEAR(windowDb(renderMix(projectRef(), rate, 2.0), rate, 0.5, 1.5),
+                directDb + 20 * std::log10(1.5 * 0.5), 0.1);
+
+    // Muting the main bus silences everything routed through it (it is left out of the export)
+    bus->SetMute(true);
+    const auto muted = renderMix(projectRef(), rate, 2.0);
+    EXPECT_LT(windowDb(muted, rate, 0.5, 1.5), -100.0);
+}
 }
