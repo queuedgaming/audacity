@@ -2487,14 +2487,14 @@ TEST_F(Au3RecordTests, ParamAutomationApplyIsAllocationFreeAndClamps)
     gCountedAllocs = 0;
     tCountAllocs = true;
     for (int i = 0; i < 1000; ++i) {
-        applier->Apply(settings, i / 1000.0);
+        applier->Apply(settings, i / 1000.0, nullptr);
     }
-    applier->Apply(settings, 0.1);
+    applier->Apply(settings, 0.1, nullptr);
     tCountAllocs = false;
     EXPECT_EQ(gCountedAllocs.load(), 0);
     EXPECT_NEAR(settings.cast<CompressorSettings>()->makeupGainDb, 10.0, 1e-9);
     EXPECT_NEAR(settings.cast<CompressorSettings>()->thresholdDb, -20.0, 1e-9);
-    applier->Apply(settings, 0.9);
+    applier->Apply(settings, 0.9, nullptr);
     EXPECT_NEAR(settings.cast<CompressorSettings>()->makeupGainDb, 30.0, 1e-9); // clamped to max
 }
 
@@ -2580,7 +2580,7 @@ public:
     explicit CheckedAutomation(std::atomic<long>& bad)
         : mBad(bad) {}
     ~CheckedAutomation() override { mAlive.store(0); }
-    void Apply(EffectSettings&, double) const noexcept override
+    void Apply(EffectSettings&, double, EffectInstance*) const noexcept override
     {
         if (mAlive.load() != kAlive) {
             mBad.fetch_add(1);
@@ -2638,5 +2638,473 @@ TEST_F(Au3RecordTests, ParamAutomationSwapWhileProcessingIsSafe)
     state->Finalize();
     EXPECT_EQ(bad.load(), 0);
     EXPECT_GT(CheckedAutomation::mApplied.load(), 8);
+}
+}
+
+// ---- plugin parameter automation (VST3 / LV2) ---------------------------------------------
+#include "au3-module-manager/PluginManager.h"
+#include "au3-module-manager/PluginDescriptor.h"
+#include "au3-module-manager/IEffectIdResolver.h"
+#include "au3-preferences/BasicSettings.h"
+#include <unordered_map>
+#include <variant>
+#ifdef AUTOTEST_LV2
+#include "au3-lv2/LV2EffectBase.h"
+#include "au3-lv2/LV2Symbols.h"
+#include <lilv/lilv.h>
+#endif
+#ifdef AUTOTEST_VST3
+#include "au3-vst3/VST3EffectBase.h"
+#include "au3-vst3/VST3Instance.h"
+#include <public.sdk/source/vst/hosting/module.h>
+#include <pluginterfaces/vst/ivstaudioprocessor.h>
+#endif
+
+namespace au::record {
+namespace {
+const PluginID kLv2GainId = wxT("au-test:lv2-autogain");
+const PluginID kVst3GainId = wxT("au-test:vst3-autogain");
+
+
+//! In-memory settings so PluginManager can serve per-plugin preferences (copied from au3/tests/MockedPrefs.cpp)
+class TestPluginSettings final : public audacity::BasicSettings
+{
+    std::vector<wxString> mGroupStack { "/" };
+
+    using DataType = std::variant<
+        wxString,
+        bool,
+        int,
+        long,
+        long long,
+        double>;
+
+    template<typename T>
+    bool DoRead(const wxString& key, T* value) const
+    {
+        auto it = mStorage.find(MakePath(key));
+        if (it == mStorage.end()) {
+            return false;
+        }
+        if (auto ptr = std::get_if<T>(&it->second)) {
+            *value = *ptr;
+            return true;
+        }
+        return false;
+    }
+
+    bool DoWrite(const wxString& key, DataType value)
+    {
+        mStorage[key] = std::move(value);
+        return true;
+    }
+
+protected:
+
+    void DoBeginGroup(const wxString& prefix) override
+    {
+        mGroupStack.push_back(prefix);
+    }
+
+    void DoEndGroup() noexcept override
+    {
+        mGroupStack.pop_back();
+    }
+
+    bool HasGroup(const wxString& key) const override
+    {
+        return true;
+    }
+
+    bool HasEntry(const wxString& key) const override
+    {
+        return mStorage.find(MakePath(key)) != mStorage.end();
+    }
+
+    bool Flush() noexcept override
+    {
+        return true;
+    }
+
+    wxString GetGroup() const override
+    {
+        return mGroupStack.back();
+    }
+
+    wxArrayString GetChildGroups() const override
+    {
+        return { };
+    }
+
+    wxArrayString GetChildKeys() const override
+    {
+        return { };
+    }
+
+    bool Remove(const wxString& key) override
+    {
+        if (key.empty()) {
+            for (auto it = mStorage.begin(); it != mStorage.end(); ++it) {
+                if (it->first.StartsWith(key)) {
+                    it = mStorage.erase(it);
+                }
+            }
+        } else {
+            auto it = mStorage.find(MakePath(key));
+            if (it != mStorage.end()) {
+                mStorage.erase(it);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void Clear() override
+    {
+        mStorage.clear();
+    }
+
+    bool Read(const wxString& key, bool* value) const override { return DoRead(key, value); }
+
+    bool Read(const wxString& key, int* value) const override { return DoRead(key, value); }
+    bool Read(const wxString& key, long* value) const override { return DoRead(key, value); }
+    bool Read(const wxString& key, long long* value) const override { return DoRead(key, value); }
+    bool Read(const wxString& key, double* value) const override { return DoRead(key, value); }
+    bool Read(const wxString& key, wxString* value) const override { return DoRead(key, value); }
+
+    bool Write(const wxString& key, bool value) override { return DoWrite(key, { value }); }
+    bool Write(const wxString& key, int value) override { return DoWrite(key, { value }); }
+    bool Write(const wxString& key, long value) override { return DoWrite(key, { value }); }
+    bool Write(const wxString& key, long long value) override { return DoWrite(key, { value }); }
+    bool Write(const wxString& key, double value) override { return DoWrite(key, { value }); }
+    bool Write(const wxString& key, const wxString& value) override { return DoWrite(key, { value }); }
+
+private:
+
+    wxString MakePath(const wxString& key) const
+    {
+        return mGroupStack.back() + "/" + key;
+    }
+
+    std::unordered_map<wxString, DataType> mStorage;
+};
+
+void ensurePluginManagerSettings()
+{
+    static bool done = false;
+    if (!done) {
+        done = true;
+        PluginManager::Get().Initialize([](const FilePath&) -> std::unique_ptr<audacity::BasicSettings> {
+            return std::make_unique<TestPluginSettings>();
+        }, nullptr);
+    }
+}
+
+//! The instances read per-plugin preferences through PluginManager: make the effect known
+void registerWithPluginManager(const EffectDefinitionInterface& effect)
+{
+    ensurePluginManagerSettings();
+    PluginDescriptor d;
+    d.SetPluginType(PluginTypeEffect);
+    d.SetID(PluginManager::GetID(&effect));
+    d.SetSymbol(effect.GetSymbol());
+    d.SetVendor(effect.GetVendor().Internal());
+    d.SetEffectFamily(effect.GetFamily().Internal());
+    d.SetEnabled(true);
+    d.SetValid(true);
+    PluginManager::Get().RegisterPlugin(std::move(d));
+}
+
+#ifdef AUTOTEST_LV2
+const LV2EffectBase* lv2Gain()
+{
+    static std::unique_ptr<LV2EffectBase> effect = []() -> std::unique_ptr<LV2EffectBase> {
+        const std::string dir = std::string(AUTOTEST_PLUGIN_DIR) + "/lv2";
+        setenv("LV2_PATH", dir.c_str(), 1);
+        if (!LV2Symbols::InitializeGWorld()) {
+            return {};
+        }
+        lilv_world_load_all(LV2Symbols::gWorld);
+        LilvNode* uri = lilv_new_uri(LV2Symbols::gWorld, "urn:audacity:test:autogain");
+        const LilvPlugin* plug = lilv_plugins_get_by_uri(lilv_world_get_all_plugins(LV2Symbols::gWorld), uri);
+        lilv_node_free(uri);
+        if (!plug) {
+            return {};
+        }
+        auto e = std::make_unique<LV2EffectBase>(*plug);
+        if (!e->InitializePlugin()) {
+            return {};
+        }
+        registerWithPluginManager(*e);
+        return e;
+    }();
+    return effect.get();
+}
+#endif
+
+#ifdef AUTOTEST_VST3
+const VST3EffectBase* vst3Gain()
+{
+    static std::unique_ptr<VST3EffectBase> effect = []() -> std::unique_ptr<VST3EffectBase> {
+        std::string error;
+        const std::string path = std::string(AUTOTEST_PLUGIN_DIR) + "/vst3/AutoTestGain.vst3";
+        auto module = VST3::Hosting::Module::create(path, error);
+        if (!module) {
+            std::cerr << "VST3 test plugin: " << error << std::endl;
+            return {};
+        }
+        for (const auto& info : module->getFactory().classInfos()) {
+            if (info.category() == kVstAudioEffectClass) {
+                auto e = std::make_unique<VST3EffectBase>(module, info);
+                registerWithPluginManager(*e);
+                return e;
+            }
+        }
+        return {};
+    }();
+    return effect.get();
+}
+#endif
+
+const EffectInstanceFactory* pluginFactory(const PluginID& id)
+{
+#ifdef AUTOTEST_LV2
+    if (id == kLv2GainId) {
+        return lv2Gain();
+    }
+#endif
+#ifdef AUTOTEST_VST3
+    if (id == kVst3GainId) {
+        return vst3Gain();
+    }
+#endif
+    return builtinFactory(id);
+}
+
+ParamLane pluginLane(const PluginID& id, const std::string& key, std::vector<ParamPoint> pts)
+{
+    ParamLane lane;
+    lane.effectId = id.ToStdString();
+    lane.paramKey = key;
+    lane.points = std::move(pts);
+    return lane;
+}
+
+const au::au3::ParamInfo* findParam(const std::vector<au::au3::ParamInfo>& params, const std::string& key)
+{
+    auto it = std::find_if(params.begin(), params.end(), [&](const auto& p) { return p.key == key; });
+    return it == params.end() ? nullptr : &*it;
+}
+}
+
+class PluginAutomationTests : public Au3RecordTests
+{
+protected:
+    //! Run the realtime (playback) path of `state` over one second of a quiet tone
+    std::vector<float> playOneSecond(const std::shared_ptr<RealtimeEffectState>& state, Au3WaveTrack* track)
+    {
+        const double rate = TEST_SAMPLE_RATE;
+        auto instance = state->Initialize(rate, 4096);
+        EXPECT_TRUE(instance);
+        EXPECT_TRUE(state->AddGroup(track, 1, float(rate), 4096));
+        const size_t total = size_t(rate);
+        auto in = monoSine(total, rate, 0.05f);
+        std::vector<float> out(total), dummy(4096);
+        for (size_t pos = 0; pos < total; pos += 1000) {
+            const size_t n = std::min<size_t>(1000, total - pos);
+            RealtimeEffectState::SetProcessTime(pos / rate, rate);
+            const float* ip[] = { in.data() + pos };
+            float* op[] = { out.data() + pos };
+            state->ProcessStart(true);
+            state->Process(track, 1, ip, op, dummy.data(), n);
+            state->ProcessEnd();
+        }
+        RealtimeEffectState::SetProcessTime(-1.0, 0.0);
+        state->Finalize();
+        return out;
+    }
+
+    //! Render two seconds of a tone through the export mixer
+    std::vector<float> exportTwoSeconds(Au3WaveTrack* track)
+    {
+        const double rate = track->GetRate();
+        if (track->Intervals().empty()) {
+            auto tone = monoSine(size_t(2 * rate), rate, 0.05f);
+            track->Append(0, reinterpret_cast<constSamplePtr>(tone.data()), floatSample, tone.size());
+            track->Flush();
+        }
+        pa::install(projectRef());
+        auto mixer = ExportPluginHelpers::CreateMixer(projectRef(), false, 0.0, 2.0, 1, 4096, true, rate, floatSample, nullptr);
+        std::vector<float> out;
+        while (auto n = mixer->Process()) {
+            auto p = reinterpret_cast<const float*>(mixer->GetBuffer());
+            out.insert(out.end(), p, p + n);
+        }
+        return out;
+    }
+
+    //! Applying `lanes` many times allocates nothing
+    long allocationsDuringApply(const RealtimeEffectAutomation& applier, EffectSettings& settings, EffectInstance* instance)
+    {
+        gCountedAllocs = 0;
+        tCountAllocs = true;
+        for (int i = 0; i < 2000; ++i) {
+            applier.Apply(settings, i / 1000.0, instance);
+        }
+        tCountAllocs = false;
+        return gCountedAllocs.load();
+    }
+};
+
+#ifdef AUTOTEST_LV2
+TEST_F(PluginAutomationTests, Lv2EnumeratesControlInputPorts)
+{
+    RealtimeEffectState::EffectFactory::Scope scope { &pluginFactory };
+    ASSERT_TRUE(lv2Gain());
+    Au3WaveTrack* track = addSelectedMonoTrack();
+    auto state = addEffect(RealtimeEffectList::Get(*track), kLv2GainId);
+    EXPECT_EQ(pa::formatOf(*state), au::au3::ParamFormat::LV2);
+
+    const auto params = pa::listParams(*state);
+    ASSERT_EQ(params.size(), 3u); // gain, mode, mute; not the output port "level"
+    const auto* gain = findParam(params, "gain");
+    ASSERT_TRUE(gain);
+    EXPECT_EQ(gain->name, "Gain");
+    EXPECT_FLOAT_EQ(gain->min, -40.0);
+    EXPECT_FLOAT_EQ(gain->max, 24.0);
+    EXPECT_FLOAT_EQ(gain->def, 0.0);
+    EXPECT_FALSE(gain->isInteger);
+    EXPECT_FALSE(gain->normalized);
+    const auto* mode = findParam(params, "mode");
+    ASSERT_TRUE(mode);
+    EXPECT_TRUE(mode->isInteger);
+    EXPECT_EQ(mode->stepCount, 2);
+    EXPECT_EQ(mode->enumLabels, (std::vector<std::string> { "Clean", "Warm", "Hot" }));
+    const auto* mute = findParam(params, "mute");
+    ASSERT_TRUE(mute);
+    EXPECT_EQ(mute->stepCount, 1);
+    EXPECT_FALSE(findParam(params, "level"));
+
+    EXPECT_EQ(pa::valueText(*state, "mode", 1.2), "Warm");
+    EXPECT_EQ(pa::valueText(*state, "mute", 1.0), "On");
+    EXPECT_NE(pa::valueText(*state, "gain", -6.0).find("-6.00"), std::string::npos);
+}
+
+TEST_F(PluginAutomationTests, Lv2ApplyWritesPortValuesWithoutAllocating)
+{
+    RealtimeEffectState::EffectFactory::Scope scope { &pluginFactory };
+    Au3WaveTrack* track = addSelectedMonoTrack();
+    auto state = addEffect(RealtimeEffectList::Get(*track), kLv2GainId);
+    auto gain = pluginLane(kLv2GainId, "gain", { { 0.0, -40.0 }, { 1.0, 40.0 } }); // clamps to 24
+    auto mode = pluginLane(kLv2GainId, "mode", { { 0.0, 0.0 }, { 1.0, 2.0 } });
+    auto applier = pa::makeApplier(*state, { &gain, &mode });
+    ASSERT_TRUE(applier);
+    EffectSettings settings = state->GetSettings();
+    EXPECT_EQ(allocationsDuringApply(*applier, settings, nullptr), 0);
+    applier->Apply(settings, 0.25, nullptr);
+    const auto& values = settings.cast<LV2EffectSettings>()->values;
+    ASSERT_GE(values.size(), 3u); // control ports in order: gain, mode, mute, (level)
+    EXPECT_FLOAT_EQ(values[0], -20.0f);
+    EXPECT_FLOAT_EQ(values[1], 1.0f); // 0.5 snapped to a scale point
+    applier->Apply(settings, 0.9, nullptr);
+    EXPECT_FLOAT_EQ(values[0], 24.0f);
+    EXPECT_FLOAT_EQ(values[1], 2.0f);
+}
+
+TEST_F(PluginAutomationTests, Lv2PlaybackAndExportRampGain)
+{
+    RealtimeEffectState::EffectFactory::Scope scope { &pluginFactory };
+    Au3WaveTrack* track = addSelectedMonoTrack();
+    auto state = addEffect(RealtimeEffectList::Get(*track), kLv2GainId);
+    ParamAutomationData::Get(*track).lanes.push_back(pluginLane(kLv2GainId, "gain", { { 0.0, -24.0 }, { 1.0, 0.0 } }));
+    pa::install(projectRef());
+    ASSERT_TRUE(state->GetAutomation());
+    const auto out = playOneSecond(state, track);
+    EXPECT_NEAR(windowDb(out, TEST_SAMPLE_RATE, 0.8, 0.9) - windowDb(out, TEST_SAMPLE_RATE, 0.1, 0.2), 16.8, 0.5);
+
+    auto& lanes = ParamAutomationData::Get(*track).lanes;
+    lanes[0].points = { { 0.0, -24.0 }, { 2.0, 0.0 } };
+    const auto rendered = exportTwoSeconds(track);
+    ASSERT_GE(rendered.size(), size_t(1.9 * track->GetRate()));
+    EXPECT_NEAR(windowDb(rendered, track->GetRate(), 1.6, 1.8) - windowDb(rendered, track->GetRate(), 0.2, 0.4), 16.8, 0.5);
+}
+#endif
+
+#ifdef AUTOTEST_VST3
+TEST_F(PluginAutomationTests, Vst3EnumeratesAutomatableParameters)
+{
+    RealtimeEffectState::EffectFactory::Scope scope { &pluginFactory };
+    ASSERT_TRUE(vst3Gain());
+    Au3WaveTrack* track = addSelectedMonoTrack();
+    auto state = addEffect(RealtimeEffectList::Get(*track), kVst3GainId);
+    EXPECT_EQ(pa::formatOf(*state), au::au3::ParamFormat::VST3);
+
+    const auto params = pa::listParams(*state);
+    // gain (100) and mode (200); bypass (300) and the read-only meter (400) are skipped
+    ASSERT_EQ(params.size(), 2u);
+    const auto* gain = findParam(params, "100");
+    ASSERT_TRUE(gain);
+    EXPECT_EQ(gain->name, "Gain");
+    EXPECT_EQ(gain->units, "dB");
+    EXPECT_TRUE(gain->normalized);
+    EXPECT_DOUBLE_EQ(gain->min, 0.0);
+    EXPECT_DOUBLE_EQ(gain->max, 1.0);
+    EXPECT_NEAR(gain->def, 0.625, 1e-9);
+    const auto* mode = findParam(params, "200");
+    ASSERT_TRUE(mode);
+    EXPECT_EQ(mode->stepCount, 2);
+    EXPECT_EQ(mode->enumLabels, (std::vector<std::string> { "Clean", "Warm", "Hot" }));
+
+    // the plugin's own value-to-string, plus units
+    const auto text = pa::valueText(*state, "100", 0.25);
+    EXPECT_NE(text.find("-24"), std::string::npos) << text;
+    EXPECT_NE(text.find("dB"), std::string::npos) << text;
+    EXPECT_EQ(pa::valueText(*state, "200", 0.5), "Warm");
+}
+
+TEST_F(PluginAutomationTests, Vst3ApplyQueuesWithoutAllocating)
+{
+    RealtimeEffectState::EffectFactory::Scope scope { &pluginFactory };
+    Au3WaveTrack* track = addSelectedMonoTrack();
+    auto state = addEffect(RealtimeEffectList::Get(*track), kVst3GainId);
+    auto gain = pluginLane(kVst3GainId, "100", { { 0.0, 0.0 }, { 1.0, 1.0 } });
+    auto applier = pa::makeApplier(*state, { &gain });
+    ASSERT_TRUE(applier);
+    auto instance = state->GetInstance();
+    ASSERT_TRUE(dynamic_cast<VST3Instance*>(instance.get()));
+    EffectSettings settings = state->GetSettings();
+    EXPECT_EQ(allocationsDuringApply(*applier, settings, instance.get()), 0);
+}
+
+TEST_F(PluginAutomationTests, Vst3PlaybackAndExportRampGain)
+{
+    RealtimeEffectState::EffectFactory::Scope scope { &pluginFactory };
+    Au3WaveTrack* track = addSelectedMonoTrack();
+    auto state = addEffect(RealtimeEffectList::Get(*track), kVst3GainId);
+    // normalized 0.25 = -24 dB, 0.625 = 0 dB
+    ParamAutomationData::Get(*track).lanes.push_back(pluginLane(kVst3GainId, "100", { { 0.0, 0.25 }, { 1.0, 0.625 } }));
+    pa::install(projectRef());
+    ASSERT_TRUE(state->GetAutomation());
+    const auto out = playOneSecond(state, track);
+    EXPECT_NEAR(windowDb(out, TEST_SAMPLE_RATE, 0.8, 0.9) - windowDb(out, TEST_SAMPLE_RATE, 0.1, 0.2), 16.8, 0.5);
+
+    ParamAutomationData::Get(*track).lanes[0].points = { { 0.0, 0.25 }, { 2.0, 0.625 } };
+    const auto rendered = exportTwoSeconds(track);
+    ASSERT_GE(rendered.size(), size_t(1.9 * track->GetRate()));
+    EXPECT_NEAR(windowDb(rendered, track->GetRate(), 1.6, 1.8) - windowDb(rendered, track->GetRate(), 0.2, 0.4), 16.8, 0.5);
+}
+#endif
+
+TEST_F(PluginAutomationTests, PluginLanesSaveByStableParameterIds)
+{
+    Au3WaveTrack* track = addSelectedMonoTrack();
+    auto& data = ParamAutomationData::Get(*track);
+    data.lanes.push_back(pluginLane(kVst3GainId, "100", { { 0.5, 0.25 } }));
+    data.lanes.push_back(pluginLane(kLv2GainId, "gain", { { 1.0, -6.0 } }));
+    XMLStringWriter xml;
+    track->WriteXML(xml);
+    EXPECT_NE(xml.find(wxT("param=\"100\"")), wxString::npos);
+    EXPECT_NE(xml.find(wxT("param=\"gain\"")), wxString::npos);
+    EXPECT_NE(xml.find(wxT("effect=\"au-test:vst3-autogain\"")), wxString::npos);
 }
 }
