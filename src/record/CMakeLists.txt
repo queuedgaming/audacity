@@ -40,6 +40,8 @@ target_sources(record PRIVATE
 target_link_libraries(record PRIVATE
         au3wrap
         au3-audio-devices
+        au3-label-track
+        au3-numeric-formats
         au3-audio-io
         au3-project-rate
         au3-stretching-sequence

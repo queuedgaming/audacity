@@ -444,6 +444,14 @@ public:
     void SetFadeInDuration(double seconds) { mFadeIn = std::max(0.0, seconds); }
     void SetFadeOutDuration(double seconds) { mFadeOut = std::max(0.0, seconds); }
     void SetFadeCurve(int curve) { mFadeCurve = curve == 1 ? 1 : 0; }
+
+    //! Detected transients (onset markers), in seconds of source audio from the sequence start, so
+    //! they follow moves, trims and splits; display at GetSequenceStartTime() + t * GetStretchRatio().
+    //! Saved with the clip.
+    const std::vector<double>& GetTransients() const { return mTransients; }
+    void SetTransients(std::vector<double> t) { mTransients = std::move(t); }
+    //! Transient markers as project times inside the visible (play) region
+    std::vector<double> GetVisibleTransientTimes() const;
     sampleCount GetLeftHandleSampleCount() const override;
     sampleCount GetRightHandleSampleCount() const override;
     [[nodiscard]] Observer::Subscription
@@ -1011,6 +1019,7 @@ private:
     double mFadeIn { 0.0 };
     double mFadeOut { 0.0 };
     int mFadeCurve { 0 };
+    std::vector<double> mTransients;
 
     double mClipStretchRatio = 1.;
     bool mStretchToMatchProjectTempo = true;

@@ -26,6 +26,16 @@ void TrackClipItem::setClip(const trackedit::Clip& clip)
         m_fadeCurve = clip.fadeCurve;
         emit fadesChanged();
     }
+    {
+        QVariantList t;
+        for (double v : clip.transients) {
+            t << (v - clip.startTime);
+        }
+        if (t != m_transients) {
+            m_transients = t;
+            emit transientsChanged();
+        }
+    }
     m_speed = clip.speed;
 
     emit titleChanged();

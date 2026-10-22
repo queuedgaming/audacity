@@ -59,6 +59,18 @@ public:
 
     //! Non-destructive clip fades (seconds; curve 0 linear, 1 equal power), one undo step
     virtual muse::Ret setClipFades(const trackedit::ClipKey& clip, double fadeIn, double fadeOut, int curve) = 0;
+
+    //! Transients (beat slicing). Each call is one undo step.
+    //! Detect onsets in the clip and store them as markers on it; optionally also as numbered labels
+    //! on a new "Transients" label track. sensitivity 0..100.
+    virtual muse::Ret detectTransients(const trackedit::ClipKey& clip, double sensitivity, bool toLabelTrack) = 0;
+    virtual muse::Ret clearTransients(const trackedit::ClipKey& clip) = 0;
+    //! Split the clip at its markers (detecting first if it has none), with short crossfades at the cuts.
+    //! quantizeStrength 0..1 moves each slice toward the nearest grid line of the given division
+    //! (0 Bar, 1 Beat, 2 1/8, 3 1/16) of the project tempo.
+    virtual muse::Ret sliceAtTransients(const trackedit::ClipKey& clip, double quantizeStrength = 0.0, int quantizeDivision = 2) = 0;
+    //! Split the clip at every grid line of the project tempo and time signature
+    virtual muse::Ret sliceToGrid(const trackedit::ClipKey& clip, int division) = 0;
 };
 
 using IAudioRecordPtr = std::shared_ptr<IRecord>;

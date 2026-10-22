@@ -21,6 +21,8 @@ class TrackClipItem : public ViewTrackItem
     Q_PROPERTY(double fadeIn READ fadeIn NOTIFY fadesChanged FINAL)
     Q_PROPERTY(double fadeOut READ fadeOut NOTIFY fadesChanged FINAL)
     Q_PROPERTY(int fadeCurve READ fadeCurve NOTIFY fadesChanged FINAL)
+    //! transient markers relative to the clip start (seconds)
+    Q_PROPERTY(QVariantList transients READ transients NOTIFY transientsChanged FINAL)
     Q_PROPERTY(int speedPercentage READ speedPercentage NOTIFY speedPercentageChanged FINAL)
     Q_PROPERTY(bool isPitchModified READ isPitchModified NOTIFY pitchChanged FINAL)
     Q_PROPERTY(bool isSpeedModified READ isSpeedModified NOTIFY speedPercentageChanged FINAL)
@@ -34,6 +36,7 @@ public:
     double fadeIn() const { return m_fadeIn; }
     double fadeOut() const { return m_fadeOut; }
     int fadeCurve() const { return m_fadeCurve; }
+    QVariantList transients() const { return m_transients; }
 
     bool isGrouped() const;
 
@@ -45,6 +48,7 @@ public:
 
 signals:
     void fadesChanged();
+    void transientsChanged();
     void groupIdChanged();
     void pitchChanged();
     void speedPercentageChanged();
@@ -56,6 +60,7 @@ private:
     double m_fadeIn = 0.0;
     double m_fadeOut = 0.0;
     int m_fadeCurve = 0;
+    QVariantList m_transients;
     double m_speed = 1.0;
 };
 }

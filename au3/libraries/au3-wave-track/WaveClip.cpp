@@ -15,6 +15,8 @@
 *//*******************************************************************/
 #include "WaveClip.h"
 
+#include <sstream>
+
 #include <math.h>
 #include <numeric>
 #include <optional>
@@ -266,6 +268,7 @@ WaveClip::WaveClip(
     mFadeIn = orig.mFadeIn;
     mFadeOut = orig.mFadeOut;
     mFadeCurve = orig.mFadeCurve;
+    mTransients = orig.mTransients;
 
     // Deep copy of attachments
     Attachments& attachments = *this;
@@ -308,6 +311,7 @@ WaveClip::WaveClip(
     mId = orig.mId;
     // A partial copy keeps a fade only on the edges it shares with the original
     mFadeCurve = orig.mFadeCurve;
+    mTransients = orig.mTransients;
     mFadeIn = t0 <= orig.GetPlayStartTime() ? orig.mFadeIn : 0.0;
     mFadeOut = t1 >= orig.GetPlayEndTime() ? orig.mFadeOut : 0.0;
 
@@ -1045,6 +1049,7 @@ static constexpr auto Selected_attr = "isSelected";
 static constexpr auto FadeIn_attr = "fadeIn";
 static constexpr auto FadeOut_attr = "fadeOut";
 static constexpr auto FadeCurve_attr = "fadeCurve";
+static constexpr auto Transients_attr = "transients";
 
 bool WaveClip::HandleXMLTag(const std::string_view& tag, const AttributesList& attrs)
 {
@@ -1082,6 +1087,13 @@ bool WaveClip::HandleXMLTag(const std::string_view& tag, const AttributesList& a
             } else if (attr == FadeOut_attr) {
                 if (value.TryGet(dblValue)) {
                     SetFadeOutDuration(dblValue);
+                }
+            } else if (attr == Transients_attr) {
+                // space-separated seconds
+                mTransients.clear();
+                std::istringstream in(std::string(value.ToWString().ToStdString()));
+                for (double t; in >> t;) {
+                    mTransients.push_back(t);
                 }
             } else if (attr == FadeCurve_attr) {
                 if (value.TryGet(longValue)) {
@@ -1232,6 +1244,14 @@ void WaveClip::WriteXML(size_t ii, XMLWriter& xmlFile) const
     }
     if (mFadeCurve != 0) {
         xmlFile.WriteAttr(FadeCurve_attr, static_cast<long>(mFadeCurve));
+    }
+    if (!mTransients.empty()) {
+        std::ostringstream out;
+        out.precision(9);
+        for (size_t i = 0; i < mTransients.size(); ++i) {
+            out << (i ? " " : "") << mTransients[i];
+        }
+        xmlFile.WriteAttr(Transients_attr, wxString(out.str()));
     }
 
     Attachments::ForEach([&](const WaveClipListener& listener){
@@ -2042,4 +2062,18 @@ sampleCount WaveClip::GetRightHandleSampleCount() const
 {
     const auto r = GetNumSamples() - TimeToSamples(mTrimLeft) - GetVisibleSampleCount();
     return r > 0 ? r : sampleCount { 0 };
+}
+
+std::vector<double> WaveClip::GetVisibleTransientTimes() const
+{
+    std::vector<double> v;
+    const double s0 = GetSequenceStartTime(), r = GetStretchRatio();
+    const double a = GetPlayStartTime(), b = GetPlayEndTime();
+    for (double t : mTransients) {
+        const double p = s0 + t * r;
+        if (p >= a - 1e-9 && p < b) {
+            v.push_back(p);
+        }
+    }
+    return v;
 }

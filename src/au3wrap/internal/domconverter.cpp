@@ -110,6 +110,7 @@ au::trackedit::Clip DomConverter::clip(const Au3WaveTrack* waveTrack, const Au3W
     clip.fadeIn = au3clip->GetFadeInDuration();
     clip.fadeOut = au3clip->GetFadeOutDuration();
     clip.fadeCurve = au3clip->GetFadeCurve();
+    clip.transients = au3clip->GetVisibleTransientTimes();
 
     return clip;
 }

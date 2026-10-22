@@ -17,6 +17,10 @@
 #include "au3wrap/internal/takelanes.h"
 #include "au3wrap/internal/autocomp.h"
 #include "au3wrap/internal/keydetect.h"
+#include "au3wrap/internal/transients.h"
+#include "au3-numeric-formats/ProjectTimeSignature.h"
+#include "au3-label-track/LabelTrack.h"
+#include "drumsynth.h"
 #include "au3wrap/internal/projectkey.h"
 
 #include "au3-xml/XMLWriter.h"
@@ -1783,5 +1787,278 @@ TEST_F(Au3RecordTests, AutoCompReportsTheKeyItUsed)
     takelanes::autoComp(projectRef(), *main, 2.0, 0.0, true, &summary);
     //! [THEN] The stored key is used and reported
     EXPECT_EQ(summary, "project key G maj, A440");
+}
+
+namespace tr = au::au3::transients;
+
+static void expectOnsetsMatchHits(const std::vector<tr::Onset>& on, const std::vector<double>& hits, const char* what)
+{
+    ASSERT_EQ(on.size(), hits.size()) << what;
+    for (size_t i = 0; i < hits.size(); ++i) {
+        EXPECT_NEAR(on[i].attack, hits[i], 0.005) << what << " hit " << i;
+        // the slice point sits just before the attack (pre-roll), never after it
+        EXPECT_LE(on[i].time, hits[i] + 0.001) << what << " hit " << i;
+        EXPECT_GE(on[i].time, hits[i] - 0.005) << what << " hit " << i;
+    }
+}
+
+TEST(TransientDetection, OnsetsOfASyntheticDrumLoopAreWithin5ms)
+{
+    for (double rate : { 44100.0, 48000.0 }) {
+        for (double offset : { 0.3, 0.4137 }) {
+            const auto loop = drumLoop(rate, 120.0, 2, offset);
+            const auto on = tr::detect(loop.x.data(), loop.x.size(), rate);
+            expectOnsetsMatchHits(on, loop.hits, ("rate " + std::to_string(int(rate)) + " offset " + std::to_string(offset)).c_str());
+        }
+    }
+    //! a faster loop (eighths 115 ms apart) with more background noise
+    const auto fast = drumLoop(44100.0, 130.0, 2, 0.25, 0.003f);
+    expectOnsetsMatchHits(tr::detect(fast.x.data(), fast.x.size(), 44100.0), fast.hits, "fast");
+}
+
+TEST(TransientDetection, ClicksAreFoundAtTheirSample)
+{
+    const double rate = 44100.0;
+    std::vector<float> x(size_t(2 * rate), 0.0f);
+    const std::vector<double> at { 0.2, 0.7, 1.05, 1.5 };
+    for (double t : at) {
+        const size_t s = size_t(t * rate);
+        for (size_t i = 0; i < 64; ++i) {
+            x[s + i] = (i % 2 ? -0.7f : 0.7f) * float(1.0 - i / 64.0);
+        }
+    }
+    const auto on = tr::detect(x.data(), x.size(), rate);
+    expectOnsetsMatchHits(on, at, "clicks");
+    //! and at a high rate (larger frames)
+    const double hr = 96000.0;
+    std::vector<float> y(size_t(2 * hr), 0.0f);
+    for (double t : at) {
+        const size_t s = size_t(t * hr);
+        for (size_t i = 0; i < 128; ++i) {
+            y[s + i] = (i % 2 ? -0.7f : 0.7f) * float(1.0 - i / 128.0);
+        }
+    }
+    expectOnsetsMatchHits(tr::detect(y.data(), y.size(), hr), at, "clicks 96k");
+}
+
+TEST(TransientDetection, NoFalsePositivesOnASustainedTone)
+{
+    for (double rate : { 44100.0, 48000.0 }) {
+        const auto x = sustainedTone(rate, 4.0, 0.5);
+        for (double sens : { 20.0, 50.0, 80.0 }) {
+            const auto on = tr::detect(x.data(), x.size(), rate, { sens });
+            //! only the note start (if anything), never the vibrato, swell or the end of the buffer
+            ASSERT_LE(on.size(), 1u) << "sensitivity " << sens;
+            if (!on.empty()) {
+                EXPECT_NEAR(on[0].attack, 0.5, 0.03);
+            }
+        }
+    }
+    //! silence and constant noise give nothing
+    std::vector<float> silence(44100, 0.0f);
+    EXPECT_TRUE(tr::detect(silence.data(), silence.size(), 44100.0).empty());
+}
+
+TEST(TransientDetection, SensitivityAndMinimumGap)
+{
+    const auto loop = drumLoop(44100.0, 120.0, 2, 0.3);
+    const auto low = tr::detect(loop.x.data(), loop.x.size(), 44100.0, { 5.0 });
+    const auto mid = tr::detect(loop.x.data(), loop.x.size(), 44100.0, { 50.0 });
+    //! low sensitivity keeps the kicks and snares (on the beats) and drops the soft hats
+    EXPECT_LT(low.size(), mid.size());
+    //! every kick and snare (on the beats) is still there
+    for (int b = 0; b < 8; ++b) {
+        const double t = 0.3 + 0.5 * b;
+        EXPECT_TRUE(std::any_of(low.begin(), low.end(), [t](const tr::Onset& o) { return std::abs(o.attack - t) < 0.005; })) << t;
+    }
+    //! a gap longer than the eighths merges them, keeping the stronger hit
+    tr::Settings wide;
+    wide.minGapSec = 0.4;
+    const auto merged = tr::detect(loop.x.data(), loop.x.size(), 44100.0, wide);
+    EXPECT_EQ(merged.size(), 8u);
+}
+
+TEST(TransientDetection, GridHelpers)
+{
+    EXPECT_DOUBLE_EQ(tr::gridStep(120, 4, 4, tr::Division::Beat), 0.5);
+    EXPECT_DOUBLE_EQ(tr::gridStep(120, 4, 4, tr::Division::Bar), 2.0);
+    EXPECT_DOUBLE_EQ(tr::gridStep(120, 4, 4, tr::Division::Sixteenth), 0.125);
+    EXPECT_DOUBLE_EQ(tr::gridStep(120, 6, 8, tr::Division::Beat), 0.25);
+    EXPECT_DOUBLE_EQ(tr::gridStep(120, 6, 8, tr::Division::Bar), 1.5);
+    const auto lines = tr::gridLines(0.3, 2.0, 0.5);
+    ASSERT_EQ(lines.size(), 3u); // strictly inside: 0.5 1.0 1.5
+    EXPECT_DOUBLE_EQ(lines[0], 0.5);
+    EXPECT_DOUBLE_EQ(lines[2], 1.5);
+    EXPECT_DOUBLE_EQ(tr::quantize(0.31, 0.25, 1.0), 0.25);
+    EXPECT_DOUBLE_EQ(tr::quantize(0.31, 0.25, 0.5), 0.28);
+    EXPECT_DOUBLE_EQ(tr::quantize(0.31, 0.25, 0.0), 0.31);
+}
+
+
+TEST_F(Au3RecordTests, DetectTransientsMarksTheClipAndWritesLabels)
+{
+    const auto loop = drumLoop(TEST_SAMPLE_RATE, 120.0, 2, 0.3);
+    Au3WaveTrack* track = addSamplesTrack(loop.x);
+    auto clip = *track->Intervals().begin();
+    const trackedit::ClipKey key { track->GetId(), clip->GetId() };
+    auto& history = ::ProjectHistory::Get(projectRef());
+    history.InitialState();
+    EXPECT_CALL(*m_projectHistory, pushHistoryState(_, _)).Times(1).WillOnce([&history](auto, auto) {
+        history.PushState(::TranslatableString::untranslatable(wxString("T")), ::TranslatableString::untranslatable(wxString("T")));
+    });
+    ASSERT_TRUE(m_record->detectTransients(key, 50, true));
+
+    //! [THEN] One marker per hit, shown in project time
+    const auto shown = clip->GetVisibleTransientTimes();
+    ASSERT_EQ(shown.size(), loop.hits.size());
+    for (size_t i = 0; i < shown.size(); ++i) {
+        EXPECT_NEAR(shown[i], loop.hits[i], 0.005);
+    }
+    //! [AND] markers follow the clip when it moves, and are saved
+    clip->ShiftBy(1.0);
+    EXPECT_NEAR(clip->GetVisibleTransientTimes()[0], loop.hits[0] + 1.0, 0.005);
+    clip->ShiftBy(-1.0);
+    XMLStringWriter xml;
+    track->WriteXML(xml);
+    EXPECT_NE(xml.ToStdString().find("transients=\""), std::string::npos);
+    {
+        auto fresh = track->CopyClip(*clip, true);
+        EXPECT_EQ(fresh->GetTransients(), clip->GetTransients());
+        fresh->SetTransients({});
+        AttributesList attrs;
+        attrs.emplace_back("transients", XMLAttributeValueView(std::string_view("0.25 1.5")));
+        EXPECT_TRUE(fresh->HandleXMLTag("waveclip", attrs));
+        EXPECT_EQ(fresh->GetTransients(), (std::vector<double> { 0.25, 1.5 }));
+    }
+
+    //! [AND] A label track "Transients" with numbered labels at the onsets
+    const ::LabelTrack* lt = nullptr;
+    for (auto* l : ::TrackList::Get(projectRef()).Any<const ::LabelTrack>()) {
+        lt = l;
+    }
+    ASSERT_TRUE(lt);
+    EXPECT_EQ(lt->GetName(), wxString("Transients"));
+    ASSERT_EQ(lt->GetNumLabels(), int(loop.hits.size()));
+    EXPECT_EQ(lt->GetLabel(0)->title, wxString("1"));
+    EXPECT_NEAR(lt->GetLabel(3)->getT0(), shown[3], 1e-9);
+
+    //! [WHEN] Undo: markers and label track are gone in one step
+    UndoManager::Get(projectRef()).Undo([&history](const UndoStackElem& elem) { history.PopState(elem.state); });
+    EXPECT_TRUE(::TrackList::Get(projectRef()).Any<const ::LabelTrack>().empty());
+    Au3WaveTrack* after = DomAccessor::findWaveTrack(projectRef(), track->GetId());
+    ASSERT_TRUE(after);
+    EXPECT_TRUE((*after->Intervals().begin())->GetTransients().empty());
+}
+
+TEST_F(Au3RecordTests, SliceAtTransientsSplitsAtEveryHitWithCrossfades)
+{
+    const auto loop = drumLoop(TEST_SAMPLE_RATE, 120.0, 2, 0.3);
+    Au3WaveTrack* track = addSamplesTrack(loop.x);
+    auto clip = *track->Intervals().begin();
+    const trackedit::ClipKey key { track->GetId(), clip->GetId() };
+    const size_t total = loop.x.size();
+    const auto before = rendered(*track, 0, total);
+
+    auto& history = ::ProjectHistory::Get(projectRef());
+    history.InitialState();
+    EXPECT_CALL(*m_projectHistory, pushHistoryState(_, _)).Times(1).WillOnce([&history](auto, auto) {
+        history.PushState(::TranslatableString::untranslatable(wxString("S")), ::TranslatableString::untranslatable(wxString("S")));
+    });
+    //! [WHEN] Slicing a clip that has no markers yet (detects first) - one undo step
+    ASSERT_TRUE(m_record->sliceAtTransients(key, 0.0, 2));
+
+    //! [THEN] One piece before the first hit plus one per hit, contiguous, cut just before each hit
+    const auto pieces = track->SortedIntervalArray();
+    ASSERT_EQ(pieces.size(), loop.hits.size() + 1);
+    for (size_t i = 1; i < pieces.size(); ++i) {
+        EXPECT_NEAR(pieces[i]->GetPlayStartTime(), loop.hits[i - 1], 0.005);
+        EXPECT_LE(pieces[i]->GetPlayStartTime(), loop.hits[i - 1] + 0.001);
+        EXPECT_NEAR(pieces[i]->GetPlayStartTime(), pieces[i - 1]->GetPlayEndTime(), 1e-9);
+        //! a short fade-in that crossfades with the neighbour's handle (same lineage)
+        EXPECT_NEAR(pieces[i]->GetFadeInDuration(), 0.003, 1e-12);
+        EXPECT_EQ(pieces[i]->GetFadeOutDuration(), 0.0);
+    }
+    EXPECT_EQ(pieces[0]->GetFadeInDuration(), 0.0);
+    //! [AND] the sliced loop plays back the same (crossfade of identical material is transparent)
+    const auto after = rendered(*track, 0, total);
+    double maxErr = 0;
+    for (size_t i = 0; i < total; ++i) {
+        maxErr = std::max(maxErr, double(std::abs(after[i] - before[i])));
+    }
+    EXPECT_LT(maxErr, 1e-3);
+
+    //! [WHEN] Undo -> the single clip is back
+    UndoManager::Get(projectRef()).Undo([&history](const UndoStackElem& elem) { history.PopState(elem.state); });
+    Au3WaveTrack* restored = DomAccessor::findWaveTrack(projectRef(), track->GetId());
+    ASSERT_TRUE(restored);
+    EXPECT_EQ(restored->NIntervals(), 1u);
+}
+
+TEST_F(Au3RecordTests, SliceToGridSplitsAtEveryBeatOfTheProjectTempo)
+{
+    auto& sig = ProjectTimeSignature::Get(projectRef());
+    sig.SetTempo(120.0);
+    sig.SetUpperTimeSignature(4);
+    sig.SetLowerTimeSignature(4);
+    const auto loop = drumLoop(TEST_SAMPLE_RATE, 120.0, 2, 0.3); // 4.8 s
+    Au3WaveTrack* track = addSamplesTrack(loop.x);
+    const trackedit::ClipKey key { track->GetId(), (*track->Intervals().begin())->GetId() };
+    EXPECT_CALL(*m_projectHistory, pushHistoryState(_, _)).Times(2);
+
+    ASSERT_TRUE(m_record->sliceToGrid(key, 1));
+    auto pieces = track->SortedIntervalArray();
+    ASSERT_EQ(pieces.size(), 10u); // cuts at 0.5 .. 4.5
+    for (size_t i = 1; i < pieces.size(); ++i) {
+        EXPECT_NEAR(pieces[i]->GetPlayStartTime(), 0.5 * i, 1.0 / TEST_SAMPLE_RATE);
+        EXPECT_NEAR(pieces[i]->GetFadeInDuration(), 0.003, 1e-12);
+    }
+    //! [AND] bars on one of the pieces made: 6/8 at 90 BPM -> bar 6 * (60/90 * 4/8) = 2 s
+    sig.SetTempo(90.0);
+    sig.SetUpperTimeSignature(6);
+    sig.SetLowerTimeSignature(8);
+    Au3WaveTrack* t2 = addSamplesTrack(std::vector<float>(size_t(5.0 * TEST_SAMPLE_RATE), 0.1f));
+    ASSERT_TRUE(m_record->sliceToGrid({ t2->GetId(), (*t2->Intervals().begin())->GetId() }, 0));
+    pieces = t2->SortedIntervalArray();
+    ASSERT_EQ(pieces.size(), 3u);
+    EXPECT_NEAR(pieces[1]->GetPlayStartTime(), 2.0, 1e-4);
+    EXPECT_NEAR(pieces[2]->GetPlayStartTime(), 4.0, 1e-4);
+}
+
+TEST_F(Au3RecordTests, SliceAndQuantizeMovesSlicesToTheGrid)
+{
+    auto& sig = ProjectTimeSignature::Get(projectRef());
+    sig.SetTempo(120.0);
+    sig.SetUpperTimeSignature(4);
+    sig.SetLowerTimeSignature(4);
+    //! hits on eighths but 30 ms late against the grid, and with +-10 ms played jitter
+    auto loop = drumLoop(TEST_SAMPLE_RATE, 120.0, 1, 0.53);
+    Au3WaveTrack* track = addSamplesTrack(loop.x);
+    const trackedit::ClipKey key { track->GetId(), (*track->Intervals().begin())->GetId() };
+    EXPECT_CALL(*m_projectHistory, pushHistoryState(_, _)).Times(1);
+    ASSERT_TRUE(m_record->sliceAtTransients(key, 1.0, 2));
+
+    const auto pieces = track->SortedIntervalArray();
+    ASSERT_EQ(pieces.size(), loop.hits.size() + 1);
+    for (size_t i = 1; i < pieces.size(); ++i) {
+        const double s = pieces[i]->GetPlayStartTime();
+        //! on a 1/8 line (0.25 s), the hit moved with it, and still contiguous with the previous piece
+        EXPECT_NEAR(s, 0.5 + 0.25 * (i - 1), 1.0 / TEST_SAMPLE_RATE) << i;
+        EXPECT_NEAR(pieces[i - 1]->GetPlayEndTime(), s, 1e-9) << i;
+    }
+    //! the kick that was at 0.53 now starts at ~0.5 (+pre-roll): silence before, energy just after
+    const auto out = rendered(*track, track->TimeToLongSamples(0.49), size_t(0.03 * TEST_SAMPLE_RATE));
+    double pre = 0, post = 0;
+    for (size_t i = 0; i < out.size(); ++i) {
+        (i < size_t(0.009 * TEST_SAMPLE_RATE) ? pre : post) += out[i] * out[i];
+    }
+    EXPECT_GT(post, 100 * pre);
+
+    //! half strength lands halfway
+    Au3WaveTrack* t2 = addSamplesTrack(loop.x);
+    EXPECT_CALL(*m_projectHistory, pushHistoryState(_, _)).Times(1);
+    ASSERT_TRUE(m_record->sliceAtTransients({ t2->GetId(), (*t2->Intervals().begin())->GetId() }, 0.5, 2));
+    const auto half = t2->SortedIntervalArray();
+    ASSERT_EQ(half.size(), loop.hits.size() + 1);
+    EXPECT_NEAR(half[1]->GetPlayStartTime(), 0.5 + 0.014, 0.003);
 }
 }

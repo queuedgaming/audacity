@@ -33,6 +33,8 @@ struct Clip {
     double fadeIn = 0.0;
     double fadeOut = 0.0;
     int fadeCurve = 0;
+    //! Transient markers (project seconds) inside the clip, from "Detect transients"
+    std::vector<double> transients;
 
     inline bool isValid() const { return key.isValid(); }
 };

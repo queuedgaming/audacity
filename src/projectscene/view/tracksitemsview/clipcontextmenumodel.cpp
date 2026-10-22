@@ -96,6 +96,7 @@ void ClipContextMenuModel::load()
         renderPitchSpeedItem,
         makeSeparator(),
         makeFadesMenu(),
+        makeTransientsMenu(),
     };
 
     const auto project = globalContext()->currentProject();
@@ -339,8 +340,65 @@ MenuItem* ClipContextMenuModel::makeFadesMenu()
     return makeMenu(muse::TranslatableString("clip", "Fades"), items, "menu-fades", valid);
 }
 
+namespace {
+const QString TR_PREFIX = QStringLiteral("clip-transients:");
+}
+
+MenuItem* ClipContextMenuModel::makeTransientsMenu()
+{
+    trackedit::Clip clip;
+    if (auto prj = globalContext()->currentTrackeditProject()) {
+        clip = prj->clip(m_clipKey.key);
+    }
+    const bool valid = clip.isValid();
+    const auto item = [&](const QString& id, const muse::TranslatableString& title, bool enabled = true) {
+        auto* it = new MenuItem(this);
+        it->setId(TR_PREFIX + id);
+        it->setTitle(title);
+        muse::ui::UiActionState st;
+        st.enabled = valid && enabled;
+        it->setState(st);
+        return it;
+    };
+    const bool has = !clip.transients.empty();
+    MenuItemList grid {
+        item("grid:0", muse::TranslatableString("clip", "Bars")),
+        item("grid:1", muse::TranslatableString("clip", "Beats")),
+        item("grid:2", muse::TranslatableString("clip", "1/8 notes")),
+        item("grid:3", muse::TranslatableString("clip", "1/16 notes")),
+    };
+    MenuItemList items {
+        item("detect:20", muse::TranslatableString("clip", "Detect transients (low sensitivity)")),
+        item("detect:50", muse::TranslatableString("clip", "Detect transients")),
+        item("detect:80", muse::TranslatableString("clip", "Detect transients (high sensitivity)")),
+        item("labels", muse::TranslatableString("clip", "Detect transients to label track")),
+        item("slice:0", muse::TranslatableString("clip", "Slice at transients")),
+        item("slice:50", muse::TranslatableString("clip", "Slice and quantize 50% (1/8)")),
+        item("slice:100", muse::TranslatableString("clip", "Slice and quantize 100% (1/8)")),
+        makeMenu(muse::TranslatableString("clip", "Slice to grid"), grid, "menu-slice-grid", valid),
+        item("clear", muse::TranslatableString("clip", "Clear transient markers"), has),
+    };
+    return makeMenu(muse::TranslatableString("clip", "Transients"), items, "menu-transients", valid);
+}
+
 void ClipContextMenuModel::handleMenuItem(const QString& itemId)
 {
+    if (itemId.startsWith(TR_PREFIX)) {
+        const QString cmd = itemId.mid(TR_PREFIX.size());
+        const auto arg = [&] { return cmd.section(':', 1).toInt(); };
+        if (cmd.startsWith("detect:")) {
+            record()->detectTransients(m_clipKey.key, arg(), false);
+        } else if (cmd == "labels") {
+            record()->detectTransients(m_clipKey.key, 50, true);
+        } else if (cmd.startsWith("slice:")) {
+            record()->sliceAtTransients(m_clipKey.key, arg() / 100.0, 2);
+        } else if (cmd.startsWith("grid:")) {
+            record()->sliceToGrid(m_clipKey.key, arg());
+        } else if (cmd == "clear") {
+            record()->clearTransients(m_clipKey.key);
+        }
+        return;
+    }
     const bool in = itemId.startsWith(FADE_IN_PREFIX);
     const bool out = itemId.startsWith(FADE_OUT_PREFIX);
     if (!in && !out && itemId != FADE_CURVE_ID) {

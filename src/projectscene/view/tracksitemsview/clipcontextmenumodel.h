@@ -51,6 +51,7 @@ private:
 
     muse::uicomponents::MenuItemList makeClipColourItems();
     muse::uicomponents::MenuItem* makeFadesMenu();
+    muse::uicomponents::MenuItem* makeTransientsMenu();
     void updateColorCheckedState();
     void updateColorMenu();
 

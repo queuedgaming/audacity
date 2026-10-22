@@ -5,6 +5,9 @@
 #include "au3record.h"
 #include "au3wrap/internal/takelanes.h"
 #include "au3wrap/internal/projectkey.h"
+#include "au3wrap/internal/transients.h"
+#include "au3-numeric-formats/ProjectTimeSignature.h"
+#include "au3-label-track/LabelTrack.h"
 
 #include <cfloat>
 
@@ -1192,6 +1195,239 @@ muse::Ret Au3Record::setClipFades(const trackedit::ClipKey& key, double fadeIn, 
     projectHistory()->pushHistoryState(trc("record", "Changed clip fades"),
                                        /*: Undo history entry name; shown after Undo and Redo in the Edit menu */
                                        trc("record", "Clip fades"));
+    return make_ok();
+}
+
+namespace {
+constexpr double kSliceFade = 0.003;    // crossfade at slice points
+constexpr double kMinPiece = 0.005;     // never make a slice shorter than this
+}
+
+std::vector<double> Au3Record::detectOnsetTimes(Au3WaveTrack* track, const WaveClip& clip, double sensitivity) const
+{
+    const double t0 = clip.GetPlayStartTime(), t1 = clip.GetPlayEndTime();
+    const auto s0 = track->TimeToLongSamples(t0);
+    const size_t len = size_t((track->TimeToLongSamples(t1) - s0).as_long_long());
+    if (len == 0) {
+        return {};
+    }
+    const size_t nch = track->NChannels();
+    std::vector<float> mono(len, 0.0f), buf(len);
+    for (size_t c = 0; c < nch; ++c) {
+        float* b[] { buf.data() };
+        track->GetFloats(c, 1, b, s0, len, false, FillFormat::fillZero, false);
+        for (size_t i = 0; i < len; ++i) {
+            mono[i] += buf[i] / float(nch);
+        }
+    }
+    ::au::au3::transients::Settings st;
+    st.sensitivity = sensitivity;
+    std::vector<double> out;
+    const double rate = track->GetRate();
+    for (const auto& o : ::au::au3::transients::detect(mono.data(), len, rate, st)) {
+        out.push_back(t0 + o.time * clip.GetStretchRatio());
+    }
+    return out;
+}
+
+static double projectGridStep(const Au3Project& project, int division)
+{
+    const auto& sig = ProjectTimeSignature::Get(project);
+    return ::au::au3::transients::gridStep(sig.GetTempo(), sig.GetUpperTimeSignature(), sig.GetLowerTimeSignature(),
+                                     static_cast<::au::au3::transients::Division>(std::clamp(division, 0, 3)));
+}
+
+muse::Ret Au3Record::detectTransients(const trackedit::ClipKey& key, double sensitivity, bool toLabelTrack)
+{
+    Au3Project& project = projectRef();
+    Au3WaveTrack* track = DomAccessor::findWaveTrack(project, ::TrackId(key.trackId));
+    auto clip = track ? DomAccessor::findWaveClip(track, key.itemId) : nullptr;
+    if (!clip) {
+        return make_ret(Ret::Code::InternalError);
+    }
+    const auto times = detectOnsetTimes(track, *clip, sensitivity);
+    std::vector<double> src;
+    for (double t : times) {
+        src.push_back((t - clip->GetSequenceStartTime()) / clip->GetStretchRatio());
+    }
+    // keep markers of hidden (trimmed) parts, replace those in the visible part
+    const double a = (clip->GetPlayStartTime() - clip->GetSequenceStartTime()) / clip->GetStretchRatio();
+    const double b = (clip->GetPlayEndTime() - clip->GetSequenceStartTime()) / clip->GetStretchRatio();
+    for (double t : clip->GetTransients()) {
+        if (t < a - 1e-9 || t >= b) {
+            src.push_back(t);
+        }
+    }
+    std::sort(src.begin(), src.end());
+    clip->SetTransients(src);
+
+    trackedit::ITrackeditProjectPtr prj = globalContext()->currentTrackeditProject();
+    if (prj) {
+        prj->notifyAboutClipChanged(DomConverter::clip(track, clip.get()));
+    }
+    if (toLabelTrack && !times.empty()) {
+        auto& tracks = ::TrackList::Get(project);
+        auto* lt = ::LabelTrack::Create(tracks);
+        lt->SetName(wxString::FromUTF8(trc("record", "Transients")));
+        if (prj) {
+            prj->notifyAboutTrackAdded(DomConverter::labelTrack(lt));
+        }
+        for (size_t i = 0; i < times.size(); ++i) {
+            SelectedRegion r(times[i], times[i]);
+            const int64_t id = lt->AddLabel(r, wxString::Format("%d", int(i + 1)));
+            if (prj) {
+                prj->notifyAboutLabelAdded(DomConverter::label(lt, DomAccessor::findLabel(lt, id)));
+            }
+        }
+    }
+    projectHistory()->pushHistoryState(trc("record", "Detected transients"),
+                                       /*: Undo history entry name; shown after Undo and Redo in the Edit menu */
+                                       trc("record", "Detect transients"));
+    return make_ok();
+}
+
+muse::Ret Au3Record::clearTransients(const trackedit::ClipKey& key)
+{
+    Au3Project& project = projectRef();
+    Au3WaveTrack* track = DomAccessor::findWaveTrack(project, ::TrackId(key.trackId));
+    auto clip = track ? DomAccessor::findWaveClip(track, key.itemId) : nullptr;
+    if (!clip) {
+        return make_ret(Ret::Code::InternalError);
+    }
+    if (clip->GetTransients().empty()) {
+        return make_ok();
+    }
+    clip->SetTransients({});
+    if (auto prj = globalContext()->currentTrackeditProject()) {
+        prj->notifyAboutClipChanged(DomConverter::clip(track, clip.get()));
+    }
+    projectHistory()->pushHistoryState(trc("record", "Cleared transient markers"),
+                                       /*: Undo history entry name; shown after Undo and Redo in the Edit menu */
+                                       trc("record", "Clear transients"));
+    return make_ok();
+}
+
+size_t Au3Record::sliceClipAt(Au3WaveTrack* track, std::shared_ptr<WaveClip> clip, std::vector<double> cuts,
+                              double strength, double step)
+{
+    const double c0 = clip->GetPlayStartTime(), c1 = clip->GetPlayEndTime();
+    std::sort(cuts.begin(), cuts.end());
+    std::vector<double> use;
+    for (double t : cuts) {
+        t = track->SnapToSample(t);
+        if (t > c0 + kMinPiece && t < c1 - kMinPiece && (use.empty() || t > use.back() + kMinPiece)) {
+            use.push_back(t);
+        }
+    }
+    if (use.empty()) {
+        return 0;
+    }
+    auto doSplit = [&] {
+        for (double t : use) {
+            track->SplitAt(t);
+        }
+        // the pieces, left to right
+        std::vector<std::shared_ptr<WaveClip> > pieces;
+        for (const auto& iv : track->SortedIntervalArray()) {
+            if (iv->GetPlayStartTime() >= c0 - 1e-9 && iv->GetPlayEndTime() <= c1 + 1e-9) {
+                pieces.push_back(iv);
+            }
+        }
+        // quantize: move each slice (not the first) toward its grid line, keeping pieces contiguous
+        if (strength > 0 && step > 0) {
+            for (size_t i = 1; i < pieces.size(); ++i) {
+                auto& prev = pieces[i - 1];
+                auto& cur = pieces[i];
+                const double from = cur->GetPlayStartTime();
+                double to = track->SnapToSample(::au::au3::transients::quantize(from, step, strength));
+                to = std::max(to, prev->GetPlayStartTime() + kMinPiece);
+                if (std::abs(to - from) < 1e-9) {
+                    continue;
+                }
+                // the left neighbour ends where this slice now starts: trimmed when it moves left,
+                // extended into its hidden handle when it moves right. The slice itself moves with
+                // its audio; its own end is fixed up the same way when the next slice is placed.
+                prev->TrimRightTo(to);
+                cur->ShiftBy(to - from);
+            }
+        }
+        // short fade-in at every cut: crossfades with the left neighbour's hidden handle (same lineage)
+        for (size_t i = 1; i < pieces.size(); ++i) {
+            pieces[i]->SetFadeInDuration(std::min(kSliceFade, pieces[i]->GetPlayDuration() / 2));
+            pieces[i]->SetFadeCurve(0);
+        }
+        return pieces.size();
+    };
+    size_t n = 0;
+    if (auto prj = globalContext()->currentTrackeditProject()) {
+        const trackedit::TrackId tid = track->GetId();
+        const auto before = prj->clipList(tid);
+        n = doSplit();
+        const auto after = prj->clipList(tid);
+        const auto contains = [](const trackedit::Clips& l, const trackedit::Clip& c) {
+            return std::any_of(l.begin(), l.end(), [&](const trackedit::Clip& o) { return o.key == c.key; });
+        };
+        for (const auto& c : before) {
+            if (!contains(after, c)) {
+                prj->notifyAboutClipRemoved(c);
+            }
+        }
+        for (const auto& c : after) {
+            if (!contains(before, c)) {
+                prj->notifyAboutClipAdded(c);
+            } else {
+                prj->notifyAboutClipChanged(c);
+            }
+        }
+    } else {
+        n = doSplit();
+    }
+    return n;
+}
+
+muse::Ret Au3Record::sliceAtTransients(const trackedit::ClipKey& key, double strength, int division)
+{
+    Au3Project& project = projectRef();
+    Au3WaveTrack* track = DomAccessor::findWaveTrack(project, ::TrackId(key.trackId));
+    auto clip = track ? DomAccessor::findWaveClip(track, key.itemId) : nullptr;
+    if (!clip) {
+        return make_ret(Ret::Code::InternalError);
+    }
+    std::vector<double> cuts = clip->GetVisibleTransientTimes();
+    if (cuts.empty()) {
+        cuts = detectOnsetTimes(track, *clip, 50.0);
+        std::vector<double> src;
+        for (double t : cuts) {
+            src.push_back((t - clip->GetSequenceStartTime()) / clip->GetStretchRatio());
+        }
+        clip->SetTransients(src);
+    }
+    if (sliceClipAt(track, clip, cuts, std::clamp(strength, 0.0, 1.0), projectGridStep(project, division)) == 0) {
+        return make_ok();
+    }
+    projectHistory()->pushHistoryState(strength > 0 ? trc("record", "Sliced and quantized at transients")
+                                       : trc("record", "Sliced at transients"),
+                                       /*: Undo history entry name; shown after Undo and Redo in the Edit menu */
+                                       trc("record", "Slice at transients"));
+    return make_ok();
+}
+
+muse::Ret Au3Record::sliceToGrid(const trackedit::ClipKey& key, int division)
+{
+    Au3Project& project = projectRef();
+    Au3WaveTrack* track = DomAccessor::findWaveTrack(project, ::TrackId(key.trackId));
+    auto clip = track ? DomAccessor::findWaveClip(track, key.itemId) : nullptr;
+    if (!clip) {
+        return make_ret(Ret::Code::InternalError);
+    }
+    const double step = projectGridStep(project, division);
+    const auto cuts = ::au::au3::transients::gridLines(clip->GetPlayStartTime(), clip->GetPlayEndTime(), step);
+    if (sliceClipAt(track, clip, cuts, 0.0, 0.0) == 0) {
+        return make_ok();
+    }
+    projectHistory()->pushHistoryState(trc("record", "Sliced to grid"),
+                                       /*: Undo history entry name; shown after Undo and Redo in the Edit menu */
+                                       trc("record", "Slice to grid"));
     return make_ok();
 }
 

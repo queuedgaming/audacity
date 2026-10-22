@@ -27,6 +27,8 @@ Rectangle {
     property real fadeIn: 0
     property real fadeOut: 0
     property int fadeCurve: 0
+    //! transient markers, seconds from the clip start
+    property var transients: []
     //! While a fade handle is dragged: the previewed lengths (seconds), otherwise -1
     property real previewFadeIn: -1
     property real previewFadeOut: -1
@@ -878,6 +880,39 @@ Rectangle {
                         }
 
                         Qt.callLater(menuBtn.clicked, mouse)
+                    }
+                }
+            }
+        }
+
+        Item {
+            id: transientTicks
+
+            //! Thin ticks at the detected transients
+            anchors.fill: viewsColumn
+            z: viewsColumn.z + 1
+            visible: !root.collapsed && root.transients && root.transients.length > 0
+            enabled: false
+            clip: true
+
+            readonly property real pxPerSec: root.context ? root.context.zoom : 0
+            readonly property real clipStartPx: (waveView.startTime - waveView.itemStartTime) * pxPerSec
+
+            Repeater {
+                model: transientTicks.visible ? root.transients : []
+                Rectangle {
+                    x: Math.round(transientTicks.clipStartPx + modelData * transientTicks.pxPerSec)
+                    y: 0
+                    width: 1
+                    height: transientTicks.height
+                    color: "#FFB020"
+                    opacity: 0.85
+                    Rectangle {
+                        x: -2
+                        width: 5
+                        height: 5
+                        rotation: 45
+                        color: parent.color
                     }
                 }
             }

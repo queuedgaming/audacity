@@ -394,6 +394,7 @@ TrackItemsContainer {
                                 fadeIn: itemData.fadeIn
                                 fadeOut: itemData.fadeOut
                                 fadeCurve: itemData.fadeCurve
+                                transients: itemData.transients
 
                                 currentClipStyle: clipsModel.clipStyle
                                 headerHeight: root.headerHeight

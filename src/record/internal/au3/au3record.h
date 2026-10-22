@@ -15,6 +15,9 @@
 #include "context/iglobalcontext.h"
 #include "context/iplaybackstate.h"
 #include "trackedit/iprojecthistory.h"
+
+class WaveTrack;
+class WaveClip;
 #include "trackedit/itrackeditinteraction.h"
 #include "trackedit/iselectioncontroller.h"
 #include "audio/iaudioengine.h"
@@ -63,6 +66,10 @@ public:
     std::string projectKeyLabel(const std::optional<ProjectKeyInfo>& key) const override;
     std::string lastAutoCompKey() const override { return m_lastAutoCompKey; }
     muse::Ret setClipFades(const trackedit::ClipKey& clip, double fadeIn, double fadeOut, int curve) override;
+    muse::Ret detectTransients(const trackedit::ClipKey& clip, double sensitivity, bool toLabelTrack) override;
+    muse::Ret clearTransients(const trackedit::ClipKey& clip) override;
+    muse::Ret sliceAtTransients(const trackedit::ClipKey& clip, double quantizeStrength, int quantizeDivision) override;
+    muse::Ret sliceToGrid(const trackedit::ClipKey& clip, int division) override;
 
     //! Stop time for lead-in recording: selection end when punch-out applies, else DBL_MAX
     double punchOutTime(double punchInTime) const;
@@ -76,6 +83,9 @@ public:
     muse::async::Notification recordingFinished() const override;
 
 private:
+    //! split at project times, crossfade, optionally quantize; returns number of pieces made
+    size_t sliceClipAt(::WaveTrack* track, std::shared_ptr<::WaveClip> clip, std::vector<double> cuts, double strength, double step);
+    std::vector<double> detectOnsetTimes(::WaveTrack* track, const ::WaveClip& clip, double sensitivity) const;
     struct RecordData {
         trackedit::ClipKey clipKey;          // clip on original track (for commit). In deferred mode, set when recording starts.
         au3::Au3ClipId pendingClipId;        // clip ID on pending track (for callback lookup)
