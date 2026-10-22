@@ -12,6 +12,7 @@ set( SOURCES
    RealtimeEffectManager.h
    RealtimeEffectState.cpp
    RealtimeEffectState.h
+   RealtimeEffectAutomation.h
    SavedMasterEffectList.cpp
    SavedMasterEffectList.h
 )

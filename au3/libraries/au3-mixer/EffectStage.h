@@ -51,6 +51,15 @@ public:
         int channel, int nInputChannels, Source& upstream, Buffers& inBuffers, const Factory& factory, EffectSettings& settings,
         double sampleRate, std::optional<sampleCount> genLength);
 
+    //! Audacity 4 parameter automation (see MixerOptions::StageSpecification::automation)
+    using Automation = std::function<void(EffectSettings&, double)>;
+    static constexpr size_t AutomationBlockSize = 256;
+    void SetAutomation(Automation automation, double startTime)
+    {
+        mAutomation = std::move(automation);
+        mAutomationStart = startTime;
+    }
+
     EffectStage(const EffectStage&) = delete;
     EffectStage& operator =(const EffectStage&) = delete;
     //! Finalizes the instance
@@ -78,7 +87,7 @@ private:
      @pre curBlockSize <= mInBuffers.Remaining()
      @return success
      */
-    bool Process(EffectInstance& instance, size_t channel, const Buffers& data, size_t curBlockSize, size_t outBufferOffset) const;
+    bool Process(EffectInstance& instance, size_t channel, const Buffers& data, size_t curBlockSize, size_t outBufferOffset, size_t inOffset = 0) const;
 
     [[nodiscard]] std::optional<size_t> FetchProcessAndAdvance(
         Buffers& data, size_t bound, bool doZeros, size_t outBufferOffset = 0);
@@ -96,6 +105,10 @@ private:
     size_t mLastZeroes{};
     bool mLatencyDone{ false };
     bool mCleared{ false };
+
+    Automation mAutomation;
+    double mAutomationStart = 0.0;
+    long long mAutomationPosition = 0; //!< input samples processed so far
 };
 
 /*

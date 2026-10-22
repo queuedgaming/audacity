@@ -436,6 +436,9 @@ std::unique_ptr<EffectStage>& Mixer::RegisterEffectStage(
     auto& pNewDownstream = mStages.emplace_back(EffectStage::Create(
                                                     -1, numChannels, upstream, stageInput, factory, settings, outRate,
                                                     std::nullopt));
+    if (pNewDownstream && stage.automation) {
+        pNewDownstream->SetAutomation(stage.automation, mTimesAndSpeed->mT0);
+    }
     if (!pNewDownstream) {
         // Just omit the failed stage from rendering
         // TODO propagate the error?

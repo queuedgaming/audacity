@@ -107,6 +107,10 @@ struct StageSpecification final {
     EffectSettings settings;
 
     mutable std::shared_ptr<EffectInstance> mpFirstInstance;
+
+    //! Audacity 4 parameter automation: writes automated values for a project time into the
+    //! stage's settings; evaluated every EffectStage::AutomationBlockSize samples. May be empty.
+    std::function<void(EffectSettings&, double)> automation {};
 };
 }
 #endif

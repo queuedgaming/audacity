@@ -199,6 +199,10 @@ GetEffectStagesImpl(const Host& host)
         auto& stage = result.emplace_back(MixerOptions::StageSpecification {
             [pEffect]{ return pEffect->MakeInstance(); },
             settings });
+        // Audacity 4 parameter automation follows the state into rendering/export
+        if (auto pAutomation = pState->GetAutomation()) {
+            stage.automation = [pAutomation](EffectSettings& s, double t) { pAutomation->Apply(s, t); };
+        }
     }
     return result;
 }

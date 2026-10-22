@@ -23,6 +23,8 @@
 #include "au3-utility/Observer.h"
 #include "au3-components/PluginProvider.h" // for PluginID
 #include "au3-xml/XMLTagHandler.h"
+#include "RealtimeEffectAutomation.h"
+#include <memory>
 
 class ChannelGroup;
 class EffectSettingsAccess;
@@ -74,6 +76,18 @@ public:
     std::shared_ptr<EffectInstance> GetInstance();
 
     std::shared_ptr<EffectInstance> PeekInstance() const { return mwInstance.lock(); }
+
+    //! Audacity 4 parameter automation. Main thread: installs (or clears) the automation applied
+    //! to the worker settings while processing; waits for a running Process() before releasing
+    //! the previous object.
+    void SetAutomation(std::shared_ptr<const RealtimeEffectAutomation> automation);
+    std::shared_ptr<const RealtimeEffectAutomation> GetAutomation() const { return mAutomationOwner; }
+
+    //! Audio thread: project time of the first sample of the next Process() calls (set by
+    //! AudioIO around track processing). A negative time disables automation.
+    static void SetProcessTime(double time, double rate) noexcept;
+    //! Granularity of automation updates during playback, in samples
+    static constexpr size_t AutomationBlockSize = 256;
 
     //! Get locations that a GUI can connect meters to
     const EffectOutputs* GetOutputs() const { return mMovedOutputs.get(); }
@@ -148,6 +162,9 @@ private:
 
     //! Stateful instance made by the plug-in
     std::weak_ptr<EffectInstance> mwInstance;
+    std::shared_ptr<const RealtimeEffectAutomation> mAutomationOwner;
+    std::atomic<const RealtimeEffectAutomation*> mAutomation{ nullptr };
+    std::atomic<int> mAutomationInUse{ 0 };
     //! Stateless effect object
     const EffectInstanceFactory* mPlugin{};
 

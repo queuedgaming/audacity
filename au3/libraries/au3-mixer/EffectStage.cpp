@@ -280,10 +280,22 @@ std::optional<size_t> EffectStage::FetchProcessAndAdvance(
             if (!pInstance) {
                 continue;
             }
-            if (!Process(*pInstance, ii, data, curBlockSize, outBufferOffset)) {
-                return {};
+            if (!mAutomation) {
+                if (!Process(*pInstance, ii, data, curBlockSize, outBufferOffset)) {
+                    return {};
+                }
+                continue;
+            }
+            // Audacity 4 parameter automation: sub-blocks with freshly evaluated values
+            for (size_t sub = 0; sub < curBlockSize; sub += AutomationBlockSize) {
+                const size_t n = std::min(AutomationBlockSize, curBlockSize - sub);
+                mAutomation(mSettings, mAutomationStart + double(mAutomationPosition + static_cast<long long>(sub)) / mSampleRate);
+                if (!Process(*pInstance, ii, data, n, outBufferOffset + sub, sub)) {
+                    return {};
+                }
             }
         }
+        mAutomationPosition += static_cast<long long>(curBlockSize);
 
         if (doZeroes) {
             // Either a generator or doing the tail; will count down delay
@@ -312,7 +324,7 @@ std::optional<size_t> EffectStage::FetchProcessAndAdvance(
 
 bool EffectStage::Process(EffectInstance& instance,
                           size_t channel, const Buffers& data, size_t curBlockSize,
-                          size_t outBufferOffset) const
+                          size_t outBufferOffset, size_t inOffset) const
 {
     size_t processed{};
     try {
@@ -323,6 +335,9 @@ bool EffectStage::Process(EffectInstance& instance,
         assert(channel <= nPositions);
         std::vector<float*> inPositions(
             positions + channel, positions + nPositions - channel);
+        for (auto& p : inPositions) {
+            p += inOffset;
+        }
         // When the plug-in expects many input channels, replicate the last
         // buffer (assumed to be zero-filled) as dummy input
         inPositions.resize(

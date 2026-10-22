@@ -59,6 +59,7 @@ time warp info and AudioIOListener and whether the playback is looped.
 
 *//*******************************************************************/
 #include "AudioIO.h"
+#include "au3-realtime-effects/RealtimeEffectState.h"
 
 #include "AudioIOExt.h"
 #include "AudioIOListener.h"
@@ -2113,6 +2114,9 @@ bool AudioIO::ProcessPlaybackSlices(
         processingBufferOffsets[n] = mProcessingBuffers[n].size();
     }
 
+    // Audacity 4 parameter automation: project time of the first newly produced sample
+    const double automationTime = mPlaybackSchedule.mTimeQueue.GetLastTime();
+
     do {
         const auto slice
             =policy.GetPlaybackSlice(mPlaybackSchedule, available);
@@ -2224,11 +2228,13 @@ bool AudioIO::ProcessPlaybackSlices(
                     std::fill_n(pointers[i], len, .0f);
                 }
 
+                RealtimeEffectState::SetProcessTime(automationTime, mRate);
                 const auto discardable = pScope->Process(channelGroup, &pointers[0],
                                                          mScratchPointers.data(),
                                                          // The single dummy output buffer:
                                                          mScratchPointers[mNumPlaybackChannels],
                                                          mNumPlaybackChannels, len);
+                RealtimeEffectState::SetProcessTime(-1.0, 0.0);
                 // Check for asynchronous user changes in mute, solo status
                 const auto silenced = SequenceShouldBeSilent(*seq);
                 for (int i = 0; i < seq->NChannels(); ++i) {

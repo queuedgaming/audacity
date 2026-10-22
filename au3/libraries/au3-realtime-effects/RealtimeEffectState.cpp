@@ -613,6 +613,14 @@ bool RealtimeEffectState::ProcessStart(bool running)
 
 //! Visit the effect processors that were added in AddGroup
 /*! The iteration over channels in AddGroup and Process must be the same */
+// Audacity 4 parameter automation: block time of the processing thread
+namespace {
+thread_local double tProcessTime = -1.0;
+thread_local double tProcessRate = 0.0;
+}
+#define sProcessTime tProcessTime
+#define sProcessRate tProcessRate
+
 size_t RealtimeEffectState::Process(
     const ChannelGroup* group, unsigned chans,
     const float* const* inbuf, float* const* outbuf, float* const dummybuf,
@@ -673,6 +681,20 @@ size_t RealtimeEffectState::Process(
     const auto numAudioIn = pInstance->GetAudioInCount();
     const auto numAudioOut = pInstance->GetAudioOutCount();
     const auto clientOut = stackAllocate(float*, numAudioOut);
+    // Hold the installed automation for the whole call (see SetAutomation)
+    struct AutomationGuard {
+        RealtimeEffectState& state;
+        const RealtimeEffectAutomation* ptr = nullptr;
+        explicit AutomationGuard(RealtimeEffectState& s) : state(s)
+        {
+            state.mAutomationInUse.fetch_add(1, std::memory_order_acq_rel);
+            if (sProcessTime >= 0 && sProcessRate > 0) {
+                ptr = state.mAutomation.load(std::memory_order_acquire);
+            }
+        }
+        ~AutomationGuard() { state.mAutomationInUse.fetch_sub(1, std::memory_order_acq_rel); }
+        const RealtimeEffectAutomation* get() const { return ptr; }
+    } automation { *this };
     size_t len = 0;
     auto processor = pair.first;
     // Outer loop over processors
@@ -689,9 +711,16 @@ size_t RealtimeEffectState::Process(
         }
 
         // Inner loop over blocks
-        const auto blockSize = pInstance->GetBlockSize();
+        // Audacity 4 automation: evaluate per sub-block of at most AutomationBlockSize
+        const auto pAutomation = automation.get();
+        const auto blockSize = pAutomation
+                               ? std::min<size_t>(pInstance->GetBlockSize(), AutomationBlockSize)
+                               : pInstance->GetBlockSize();
         for (size_t block = 0; block < numSamples; block += blockSize) {
             auto cnt = std::min(numSamples - block, blockSize);
+            if (pAutomation) {
+                pAutomation->Apply(mWorkerSettings.settings, sProcessTime + double(block) / sProcessRate);
+            }
             // Assuming we are in a processing scope, use the worker settings
             auto processed = pInstance->RealtimeProcess(
                 processor, mWorkerSettings.settings, clientIn, clientOut, cnt);
@@ -956,4 +985,22 @@ std::shared_ptr<EffectSettingsAccess> RealtimeEffectState::GetAccess()
     }
 
     return std::make_shared<Access>(*this);
+}
+
+// ---- Audacity 4 parameter automation ----------------------------------------------------
+
+
+void RealtimeEffectState::SetProcessTime(double time, double rate) noexcept
+{
+    tProcessTime = time;
+    tProcessRate = rate;
+}
+
+void RealtimeEffectState::SetAutomation(std::shared_ptr<const RealtimeEffectAutomation> automation)
+{
+    mAutomation.store(automation.get(), std::memory_order_release);
+    // A Process() that loaded the previous pointer may still use it: wait it out
+    while (mAutomationInUse.load(std::memory_order_acquire) != 0) {
+    }
+    mAutomationOwner = std::move(automation);
 }
