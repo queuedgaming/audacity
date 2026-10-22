@@ -23,6 +23,7 @@ set(MODULE_TEST_SRC
 
 set(MODULE_TEST_INCLUDE
     ${CMAKE_CURRENT_LIST_DIR}/..
+    ${CMAKE_CURRENT_LIST_DIR}/../../effects/builtin_collection
     )
 
 set(MODULE_TEST_LINK
@@ -35,6 +36,8 @@ set(MODULE_TEST_LINK
     au3-project-file-io
     au3-numeric-formats
     au3-label-track
+    au3-realtime-effects
+    effects_builtin_collection
 
     muse::ui
     )

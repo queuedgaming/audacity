@@ -227,3 +227,109 @@ TEST(MonitorPlanTests, DeviceLatency)
     EXPECT_NEAR(deviceLatencySeconds(100.0, 0, 0), 0.200, 1e-9);
     EXPECT_NEAR(deviceLatencySeconds(100.0, 12, 15), 0.027, 1e-9);
 }
+
+// ---- live settings updates -------------------------------------------------------------
+
+namespace {
+struct Counted {
+    static inline int alive = 0;
+    int value = 0;
+    explicit Counted(int v = 0) : value(v) { ++alive; }
+    Counted(const Counted& o) : value(o.value) { ++alive; }
+    Counted& operator=(const Counted&) = default;
+    ~Counted() { --alive; }
+};
+
+//! Gain effect whose gain is a "setting" mirrored from a main-thread source like Au3MonitorEffect
+class MirroredGainEffect : public MonitorEffect
+{
+public:
+    explicit MirroredGainEffect(const float* source) : m_source(source) {}
+    std::string name() const override { return "gain"; }
+    double latencySeconds() const override { return 0; }
+    void syncSettings() override { ++syncs; m_mailbox.post(std::make_unique<float>(*m_source)); }
+    void process(float* const* ch, size_t n) noexcept override
+    {
+        m_mailbox.takeInto(m_gain);
+        for (size_t i = 0; i < n; ++i) {
+            ch[0][i] *= m_gain;
+            ch[1][i] *= m_gain;
+        }
+    }
+
+    int syncs = 0;
+
+private:
+    const float* m_source;
+    float m_gain = 1.f;
+    SettingsMailbox<float> m_mailbox;
+};
+}
+
+TEST(SettingsMailboxTests, HandsOverLatestValueAndFreesOldOnes)
+{
+    Counted::alive = 0;
+    {
+        SettingsMailbox<Counted> box;
+        Counted current(1);
+        EXPECT_FALSE(box.takeInto(current));
+
+        box.post(std::make_unique<Counted>(2));
+        box.post(std::make_unique<Counted>(3)); // replaces the untaken 2
+        EXPECT_EQ(Counted::alive, 2);
+        EXPECT_TRUE(box.takeInto(current));
+        EXPECT_EQ(current.value, 3);
+        EXPECT_FALSE(box.takeInto(current)); // nothing new
+
+        // the parked old value blocks further swaps until the main thread reclaims it
+        box.post(std::make_unique<Counted>(4)); // post reclaims the parked one first
+        EXPECT_TRUE(box.takeInto(current));
+        EXPECT_EQ(current.value, 4);
+        box.post(std::make_unique<Counted>(5));
+        EXPECT_TRUE(box.takeInto(current));
+        box.post(std::make_unique<Counted>(6)); // parked 4 freed here
+        EXPECT_TRUE(box.takeInto(current));
+        EXPECT_EQ(current.value, 6);
+    }
+    EXPECT_EQ(Counted::alive, 0); // destructor frees pending + parked
+}
+
+TEST(SettingsMailboxTests, AudioSideWaitsForReclaim)
+{
+    SettingsMailbox<int> box;
+    int current = 0;
+    box.post(std::make_unique<int>(1));
+    EXPECT_TRUE(box.takeInto(current)); // old value parked
+    // simulate a post that raced in before reclaim: only possible through post(), which
+    // reclaims, so the audio side can always take the newest value on the next block
+    box.post(std::make_unique<int>(2));
+    EXPECT_TRUE(box.takeInto(current));
+    EXPECT_EQ(current, 2);
+}
+
+TEST(MonitorProcessorTests, SyncSettingsUpdatesInstalledChainWithoutRebuild)
+{
+    float sourceGain = 1.f;
+    auto chain = std::make_unique<MonitorChain>();
+    auto effect = std::make_unique<MirroredGainEffect>(&sourceGain);
+    auto* raw = effect.get();
+    chain->effects.push_back(std::move(effect));
+    MonitorProcessor p;
+    p.setChain(std::move(chain));
+
+    std::vector<float> buf(2 * 64, 1.f);
+    p.ProcessPlaythrough(buf.data(), 64);
+    EXPECT_FLOAT_EQ(buf[0], 1.f);
+
+    sourceGain = 0.25f; // user drags a slider of the track's effect
+    p.syncSettings();
+    EXPECT_EQ(raw->syncs, 1);
+    std::fill(buf.begin(), buf.end(), 1.f);
+    p.ProcessPlaythrough(buf.data(), 64);
+    EXPECT_FLOAT_EQ(buf[0], 0.25f);
+    EXPECT_EQ(p.chainSize(), 1u); // same chain, no rebuild
+
+    p.setChain(nullptr);
+    p.syncSettings(); // no chain: no-op
+    EXPECT_EQ(p.chainSize(), 0u);
+}

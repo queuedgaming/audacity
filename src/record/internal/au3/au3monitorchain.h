@@ -24,6 +24,10 @@ struct BuiltChain {
 //! Build independent effect instances (main thread) from the active realtime effects of
 //! `track` (may be null) and of the project's master stack, with their current settings.
 //! The track's own playback instances are not shared with the audio thread's monitor path.
+//! Identity of what the chain is built from: target track, list on/off, each effect state and
+//! its on/off, in order. Changes when effects are added, removed, reordered, replaced or toggled.
+std::vector<const void*> monitorChainSignature(AudacityProject& project, WaveTrack* track);
+
 BuiltChain buildMonitorChain(AudacityProject& project, WaveTrack* track, double sampleRate, bool lowLatency,
                              double thresholdSeconds);
 }

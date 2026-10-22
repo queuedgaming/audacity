@@ -101,3 +101,21 @@ void MonitorProcessor::ProcessPlaythrough(float* io, size_t frames) noexcept
     m_processing.store(false, std::memory_order_release);
 }
 }
+
+namespace au::record::monitor {
+void MonitorProcessor::syncSettings()
+{
+    // the chain is only replaced / freed by the main thread, so it is safe to walk here
+    if (MonitorChain* chain = m_chain.load(std::memory_order_acquire)) {
+        for (auto& e : chain->effects) {
+            e->syncSettings();
+        }
+    }
+}
+
+size_t MonitorProcessor::chainSize() const
+{
+    const MonitorChain* chain = m_chain.load(std::memory_order_acquire);
+    return chain ? chain->effects.size() : 0;
+}
+}

@@ -37,6 +37,12 @@
 #include "au3audio/tests/mocks/audioenginemock.h"
 #include "audio/tests/mocks/audiodrivercontrollermock.h"
 #include "mocks/recordconfigurationmock.h"
+#include "internal/au3/au3monitorchain.h"
+#include "au3-realtime-effects/RealtimeEffectList.h"
+#include "au3-realtime-effects/RealtimeEffectState.h"
+#include "effects/builtin_collection/denoise/denoiseeffects.h"
+#include "effects/builtin_collection/dynamics/compressor/compressoreffect.h"
+
 
 #include "au3wrap/internal/au3project.h"
 #include "au3wrap/internal/domaccessor.h"
@@ -2095,5 +2101,187 @@ TEST_F(Au3RecordTests, ClipStatsReportDurationPeakAndClipping)
     EXPECT_FALSE(m_record->clipStats({ track->GetId(), 987654 }));
     //! a track without take lanes
     EXPECT_EQ(m_record->takeCount(track->GetId()), 0);
+}
+}
+
+namespace au::record {
+// ---- live monitoring with real built-in effects ------------------------------------------
+
+namespace {
+const PluginID kCompressorId = wxT("au-test:compressor");
+const PluginID kNoiseId = wxT("au-test:noise-suppression");
+const PluginID kBreathId = wxT("au-test:breath-removal");
+
+const EffectInstanceFactory* builtinFactory(const PluginID& id)
+{
+    static au::effects::CompressorEffect compressor;
+    static au::effects::NoiseSuppressionEffect noise;
+    static au::effects::BreathRemovalEffect breath;
+    if (id == kCompressorId) {
+        return &compressor;
+    }
+    if (id == kNoiseId) {
+        return &noise;
+    }
+    if (id == kBreathId) {
+        return &breath;
+    }
+    return nullptr;
+}
+
+std::shared_ptr<RealtimeEffectState> addEffect(RealtimeEffectList& list, const PluginID& id)
+{
+    auto state = RealtimeEffectState::make_shared(id);
+    EXPECT_TRUE(list.AddState(state));
+    return state;
+}
+
+double rms(const std::vector<float>& v)
+{
+    double sum = 0;
+    for (float x : v) {
+        sum += double(x) * x;
+    }
+    return std::sqrt(sum / std::max<size_t>(1, v.size()));
+}
+
+//! quiet interleaved stereo sine (well under the compressor threshold)
+std::vector<float> quietSine(size_t frames, double rate)
+{
+    std::vector<float> v(2 * frames);
+    for (size_t i = 0; i < frames; ++i) {
+        v[2 * i] = v[2 * i + 1] = 0.01f * float(std::sin(2 * M_PI * 440.0 * double(i) / rate));
+    }
+    return v;
+}
+}
+
+TEST_F(Au3RecordTests, MonitorChainFromRealBuiltinEffects)
+{
+    RealtimeEffectState::EffectFactory::Scope scope { &builtinFactory };
+    Au3WaveTrack* track = addSelectedMonoTrack();
+    addEffect(RealtimeEffectList::Get(*track), kBreathId);
+    addEffect(RealtimeEffectList::Get(*track), kCompressorId);
+    addEffect(RealtimeEffectList::Get(projectRef()), kNoiseId);
+
+    auto all = monitor::buildMonitorChain(projectRef(), track, TEST_SAMPLE_RATE, false, 0.020);
+    // track stack first, in order, then master
+    EXPECT_EQ(all.used, (std::vector<std::string> { "Breath removal", "Compressor", "Noise suppression" }));
+    EXPECT_TRUE(all.bypassed.empty());
+    ASSERT_EQ(all.chain->effects.size(), 3u);
+    double sum = 0;
+    for (const auto& e : all.chain->effects) {
+        sum += e->latencySeconds();
+    }
+    EXPECT_NEAR(all.effectLatencySeconds, sum, 1e-9);
+    const double breathLatency = all.chain->effects[0]->latencySeconds();
+    EXPECT_GT(breathLatency, 0.1); // look-ahead breath detector (~230 ms)
+
+    // RNNoise works on 10 ms frames and reports ~21 ms; use a threshold that keeps it
+    const double noiseLatency = all.chain->effects[2]->latencySeconds();
+    EXPECT_LT(noiseLatency, 0.030);
+    auto low = monitor::buildMonitorChain(projectRef(), track, TEST_SAMPLE_RATE, true, 0.030);
+    EXPECT_EQ(low.bypassed, (std::vector<std::string> { "Breath removal" }));
+    EXPECT_EQ(low.used, (std::vector<std::string> { "Compressor", "Noise suppression" }));
+    EXPECT_NEAR(low.effectLatencySeconds, all.effectLatencySeconds - breathLatency, 1e-9);
+
+    // at the 20 ms default, noise suppression (just over) is bypassed too
+    auto strict = monitor::buildMonitorChain(projectRef(), track, TEST_SAMPLE_RATE, true, 0.020);
+    if (noiseLatency > 0.020) {
+        EXPECT_EQ(strict.bypassed, (std::vector<std::string> { "Breath removal", "Noise suppression" }));
+    }
+
+    // the chain processes audio blocks of any size without touching the source effects
+    monitor::MonitorProcessor p;
+    p.setChain(std::move(low.chain));
+    auto buf = quietSine(3000, TEST_SAMPLE_RATE);
+    p.ProcessPlaythrough(buf.data(), 3000);
+    for (float x : buf) {
+        ASSERT_TRUE(std::isfinite(x));
+    }
+}
+
+TEST_F(Au3RecordTests, MonitorPicksUpLiveSettingsEditsInPlace)
+{
+    RealtimeEffectState::EffectFactory::Scope scope { &builtinFactory };
+    auto state = addEffect(RealtimeEffectList::Get(projectRef()), kCompressorId);
+    auto built = monitor::buildMonitorChain(projectRef(), nullptr, TEST_SAMPLE_RATE, false, 0.020);
+    ASSERT_EQ(built.used, (std::vector<std::string> { "Compressor" }));
+    monitor::MonitorProcessor p;
+    p.setChain(std::move(built.chain));
+
+    auto runRms = [&]() {
+        double last = 0;
+        for (int b = 0; b < 20; ++b) { // long enough to flush the look-ahead
+            auto buf = quietSine(512, TEST_SAMPLE_RATE);
+            p.ProcessPlaythrough(buf.data(), 512);
+            last = rms(buf);
+        }
+        return last;
+    };
+    const double before = runRms();
+
+    state->GetAccess()->ModifySettings([](EffectSettings& settings) {
+        settings.cast<CompressorSettings>()->makeupGainDb += 12.0;
+        return nullptr;
+    });
+    p.syncSettings(); // what the 150 ms poll does when the stack did not change structurally
+    const double after = runRms();
+    EXPECT_EQ(p.chainSize(), 1u);
+    EXPECT_NEAR(20.0 * std::log10(after / before), 12.0, 1.0);
+}
+
+TEST_F(Au3RecordTests, MonitorChainSignatureTracksStructuralChanges)
+{
+    RealtimeEffectState::EffectFactory::Scope scope { &builtinFactory };
+    Au3WaveTrack* track = addSelectedMonoTrack();
+    auto& list = RealtimeEffectList::Get(*track);
+    const auto empty = monitor::monitorChainSignature(projectRef(), track);
+
+    auto a = addEffect(list, kCompressorId);
+    const auto one = monitor::monitorChainSignature(projectRef(), track);
+    EXPECT_NE(one, empty); // added
+
+    auto b = addEffect(list, kNoiseId);
+    const auto two = monitor::monitorChainSignature(projectRef(), track);
+    EXPECT_NE(two, one);
+
+    list.MoveEffect(1, 0);
+    const auto moved = monitor::monitorChainSignature(projectRef(), track);
+    EXPECT_NE(moved, two); // reordered
+
+    a->SetActive(false);
+    const auto toggled = monitor::monitorChainSignature(projectRef(), track);
+    EXPECT_NE(toggled, moved); // switched off
+    a->SetActive(true);
+    EXPECT_EQ(monitor::monitorChainSignature(projectRef(), track), moved);
+
+    list.RemoveState(b);
+    EXPECT_EQ(monitor::monitorChainSignature(projectRef(), track), one); // removed
+
+    EXPECT_NE(monitor::monitorChainSignature(projectRef(), nullptr), one); // other target
+}
+
+TEST_F(Au3RecordTests, PollMonitoringRebuildsOnStackChange)
+{
+    RealtimeEffectState::EffectFactory::Scope scope { &builtinFactory };
+    ON_CALL(*m_recordConfiguration, isInputMonitoringOn()).WillByDefault(Return(true));
+    ON_CALL(*m_recordConfiguration, monitorThroughEffects()).WillByDefault(Return(true));
+    ON_CALL(*m_recordConfiguration, lowLatencyThresholdMs()).WillByDefault(Return(20.0));
+    Au3WaveTrack* track = addSelectedMonoTrack();
+    ON_CALL(*m_selectionController, selectedTracks())
+    .WillByDefault(Return(trackedit::TrackIdList { track->GetId() }));
+    m_record->initMonitoring();
+
+    m_record->refreshMonitoring();
+    EXPECT_TRUE(m_record->monitoringStatus().effects.empty());
+
+    addEffect(RealtimeEffectList::Get(*track), kCompressorId);
+    m_record->pollMonitoring();
+    EXPECT_EQ(m_record->monitoringStatus().effects, (std::vector<std::string> { "Compressor" }));
+
+    addEffect(RealtimeEffectList::Get(projectRef()), kNoiseId);
+    m_record->pollMonitoring();
+    EXPECT_EQ(m_record->monitoringStatus().effects, (std::vector<std::string> { "Compressor", "Noise suppression" }));
 }
 }

@@ -204,10 +204,8 @@ TransportSequences MakeTransportTracks(Au3TrackList& trackList, bool selectedOnl
     return result;
 }
 
-void Au3Record::init()
+void Au3Record::initMonitoring()
 {
-    m_audioInput = std::make_shared<Au3AudioInput>(iocContext());
-
     // live monitoring: one processor for the app's lifetime, installed on the playthrough path
     m_monitor = std::make_unique<monitor::MonitorProcessor>();
     if (auto* audioIO = AudioIO::Get()) {
@@ -224,6 +222,19 @@ void Au3Record::init()
             }
         });
     }
+
+    // live effect edits: structure changes rebuild the chain, settings are pushed in place
+    m_monitorPoll = std::make_unique<QTimer>();
+    m_monitorPoll->setInterval(150);
+    QObject::connect(m_monitorPoll.get(), &QTimer::timeout, [this]() { pollMonitoring(); });
+    m_monitorPoll->start();
+}
+
+void Au3Record::init()
+{
+    m_audioInput = std::make_shared<Au3AudioInput>(iocContext());
+
+    initMonitoring();
 
     audioEngine()->recordingUpdateRequested().onNotify(this, [this]() {
         if (m_recordData.empty()) {
@@ -1460,19 +1471,39 @@ void Au3Record::applyMonitorLevel()
     m_monitor->setMuted(recordConfiguration()->monitorMuted());
 }
 
+Au3WaveTrack* Au3Record::monitorTarget()
+{
+    // the record target, as Artist mode shows it: the first selected wave track
+    Au3Project& project = projectRef();
+    for (const auto& id : selectionController()->selectedTracks()) {
+        if (auto* track = DomAccessor::findWaveTrack(project, ::TrackId(id))) {
+            return track;
+        }
+    }
+    return nullptr;
+}
+
+void Au3Record::pollMonitoring()
+{
+    if (!m_monitor || !globalContext()->currentProject() || !recordConfiguration()->isInputMonitoringOn()
+        || !recordConfiguration()->monitorThroughEffects()) {
+        return;
+    }
+    if (monitor::monitorChainSignature(projectRef(), monitorTarget()) != m_monitorSignature) {
+        refreshMonitoring();
+    } else {
+        m_monitor->syncSettings();
+    }
+}
+
 void Au3Record::refreshMonitoring()
 {
     if (!m_monitor) {
         return;
     }
     Au3Project& project = projectRef();
-    // the record target, as Artist mode shows it: the first selected wave track
-    Au3WaveTrack* target = nullptr;
-    for (const auto& id : selectionController()->selectedTracks()) {
-        if ((target = DomAccessor::findWaveTrack(project, ::TrackId(id)))) {
-            break;
-        }
-    }
+    Au3WaveTrack* target = monitorTarget();
+    m_monitorSignature = monitor::monitorChainSignature(project, target);
     MonitoringStatus status;
     status.enabled = recordConfiguration()->isInputMonitoringOn();
     status.targetTrack = target ? au::au3::wxToStdString(target->GetName()) : std::string();

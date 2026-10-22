@@ -20,6 +20,54 @@ public:
     virtual std::string name() const = 0;
     virtual double latencySeconds() const = 0;
     virtual void process(float* const* channels, size_t frames) noexcept = 0;
+    //! main thread: pick up the latest settings of the effect this mirrors (see SettingsMailbox)
+    virtual void syncSettings() {}
+};
+
+//! Hands a new value from the main thread to the audio thread without locks or allocation on
+//! the audio side: the main thread posts a heap object, the audio thread swaps it into its
+//! current value and parks the old one, the main thread frees the parked one on its next post.
+template<typename T>
+class SettingsMailbox
+{
+public:
+    ~SettingsMailbox()
+    {
+        delete m_pending.exchange(nullptr);
+        delete m_retired.exchange(nullptr);
+    }
+
+    //! main thread; replaces a value the audio thread has not taken yet
+    void post(std::unique_ptr<T> value)
+    {
+        reclaim();
+        delete m_pending.exchange(value.release(), std::memory_order_acq_rel);
+    }
+
+    //! main thread
+    void reclaim() { delete m_retired.exchange(nullptr, std::memory_order_acq_rel); }
+
+    //! audio thread: true when `current` was replaced by a posted value
+    bool takeInto(T& current) noexcept
+    {
+        if (m_retired.load(std::memory_order_acquire)) {
+            return false; // previous value not reclaimed yet; try again next block
+        }
+        T* next = m_pending.exchange(nullptr, std::memory_order_acq_rel);
+        if (!next) {
+            return false;
+        }
+        using std::swap;
+        swap(current, *next);
+        m_retired.store(next, std::memory_order_release);
+        return true;
+    }
+
+    bool hasPending() const { return m_pending.load() != nullptr; }
+
+private:
+    std::atomic<T*> m_pending{ nullptr };
+    std::atomic<T*> m_retired{ nullptr };
 };
 
 //! What an effect of the target track / master stack looks like when planning the chain
@@ -65,6 +113,9 @@ public:
     void setGainDb(double db);
     void setMuted(bool muted);
     void setEffectsEnabled(bool enabled);
+    //! main thread: let every effect of the installed chain pick up its latest settings
+    void syncSettings();
+    size_t chainSize() const;
 
     double gainDb() const { return m_gainDb.load(); }
     bool muted() const { return m_muted.load(); }

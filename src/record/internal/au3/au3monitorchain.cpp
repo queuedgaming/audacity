@@ -18,8 +18,9 @@ namespace {
 class Au3MonitorEffect final : public MonitorEffect
 {
 public:
-    Au3MonitorEffect(std::string name, std::shared_ptr<EffectInstance> instance, EffectSettings settings, double rate)
-        : m_name(std::move(name)), m_instance(std::move(instance)), m_settings(std::move(settings)),
+    Au3MonitorEffect(std::string name, std::shared_ptr<EffectInstance> instance, EffectSettings settings, double rate,
+                     std::weak_ptr<RealtimeEffectState> state)
+        : m_name(std::move(name)), m_state(std::move(state)), m_instance(std::move(instance)), m_settings(std::move(settings)),
         m_outL(MonitorProcessor::MAX_BLOCK), m_outR(MonitorProcessor::MAX_BLOCK), m_silence(MonitorProcessor::MAX_BLOCK, 0.0f),
         m_dummy(MonitorProcessor::MAX_BLOCK)
     {
@@ -53,11 +54,23 @@ public:
     std::string name() const override { return m_name; }
     double latencySeconds() const override { return m_latency; }
 
+    void syncSettings() override
+    {
+        auto state = m_state.lock();
+        if (!state) {
+            return;
+        }
+        // copy on the main thread; the audio thread only swaps it in (see SettingsMailbox)
+        auto access = state->GetAccess();
+        m_mailbox.post(std::make_unique<EffectSettings>(access ? access->Get() : state->GetSettings()));
+    }
+
     void process(float* const* chans, size_t frames) noexcept override
     {
         if (!m_ok) {
             return;
         }
+        m_mailbox.takeInto(m_settings);
         EffectInstance::MessagePackage package { m_settings, nullptr };
         m_instance->RealtimeProcessStart(package);
         const size_t block = std::max<size_t>(1, m_instance->GetBlockSize());
@@ -93,6 +106,8 @@ public:
 
 private:
     std::string m_name;
+    std::weak_ptr<RealtimeEffectState> m_state;
+    SettingsMailbox<EffectSettings> m_mailbox;
     std::shared_ptr<EffectInstance> m_instance;
     EffectSettings m_settings;
     std::vector<float> m_outL, m_outR, m_silence, m_dummy;
@@ -109,7 +124,7 @@ void collect(RealtimeEffectList& list, bool master, double rate,
     }
     for (size_t i = 0; i < list.GetStatesCount(); ++i) {
         auto state = list.GetStateAt(i);
-        if (!state || !state->IsActive()) {
+        if (!state || !state->IsEnabled()) { // main-thread flag; IsActive() is the worker copy
             continue;
         }
         const EffectInstanceFactory* factory = state->GetEffect();
@@ -127,7 +142,7 @@ void collect(RealtimeEffectList& list, bool master, double rate,
         if (name.empty()) {
             name = state->GetID().ToStdString();
         }
-        auto effect = std::make_unique<Au3MonitorEffect>(name, instance, state->GetSettings(), rate);
+        auto effect = std::make_unique<Au3MonitorEffect>(name, instance, state->GetSettings(), rate, state);
         if (!effect->ok()) {
             continue;
         }
@@ -135,6 +150,28 @@ void collect(RealtimeEffectList& list, bool master, double rate,
         effects.push_back(std::move(effect));
     }
 }
+}
+
+namespace {
+void sign(RealtimeEffectList& list, std::vector<const void*>& out)
+{
+    out.push_back(list.IsActive() ? &list : nullptr);
+    for (size_t i = 0; i < list.GetStatesCount(); ++i) {
+        auto state = list.GetStateAt(i);
+        out.push_back(state.get());
+        out.push_back(state && state->IsEnabled() ? state.get() : nullptr);
+    }
+}
+}
+
+std::vector<const void*> monitorChainSignature(AudacityProject& project, WaveTrack* track)
+{
+    std::vector<const void*> out { track };
+    if (track) {
+        sign(RealtimeEffectList::Get(*track), out);
+    }
+    sign(RealtimeEffectList::Get(project), out);
+    return out;
 }
 
 BuiltChain buildMonitorChain(AudacityProject& project, WaveTrack* track, double sampleRate, bool lowLatency,

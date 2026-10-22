@@ -5,6 +5,7 @@
 #pragma once
 
 #include <map>
+#include <QTimer>
 
 #include <vector>
 
@@ -68,6 +69,11 @@ public:
     std::string lastAutoCompKey() const override { return m_lastAutoCompKey; }
     muse::Ret setClipFades(const trackedit::ClipKey& clip, double fadeIn, double fadeOut, int curve) override;
     void refreshMonitoring() override;
+    //! main thread, ~every 150 ms while monitoring: rebuilds the chain when the effect stacks
+    //! changed structurally, else pushes the current effect settings into the monitor instances
+    void pollMonitoring();
+    //! creates and installs the monitor processor (part of init(); separate for tests)
+    void initMonitoring();
     MonitoringStatus monitoringStatus() const override;
     muse::async::Notification monitoringStatusChanged() const override;
     int takeCount(const trackedit::TrackId& track) const override;
@@ -93,6 +99,9 @@ private:
     MonitoringStatus m_monitoringStatus;
     muse::async::Notification m_monitoringStatusChanged;
     void applyMonitorLevel();
+    au3::Au3WaveTrack* monitorTarget();
+    std::vector<const void*> m_monitorSignature;
+    std::unique_ptr<QTimer> m_monitorPoll;
     //! split at project times, crossfade, optionally quantize; returns number of pieces made
     size_t sliceClipAt(::WaveTrack* track, std::shared_ptr<::WaveClip> clip, std::vector<double> cuts, double strength, double step);
     std::vector<double> detectOnsetTimes(::WaveTrack* track, const ::WaveClip& clip, double sensitivity) const;
