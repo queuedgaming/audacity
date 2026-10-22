@@ -166,6 +166,14 @@ static UiActionList STATIC_ACTIONS = {
              //: Action description: shown as a tooltip; can be a full sentence
              TranslatableString("action_description", "Show the routing graph of tracks, buses and master")
              ),
+    UiAction("track-mixer",
+             au::context::UiCtxAny,
+             au::context::CTX_ANY,
+             //: Action title: shown as a menu item or a button label; keep it short
+             TranslatableString("action", "Mixer…"),
+             //: Action description: shown as a tooltip; can be a full sentence
+             TranslatableString("action_description", "Show the channel-strip mixer of all tracks, buses and master")
+             ),
     UiAction("track-toggle-param-automation",
              au::context::UiCtxAny,
              au::context::CTX_ANY,

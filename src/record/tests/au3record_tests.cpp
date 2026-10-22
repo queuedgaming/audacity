@@ -22,6 +22,7 @@
 #include "au3-label-track/LabelTrack.h"
 #include "drumsynth.h"
 #include "au3wrap/internal/projectkey.h"
+#include "au3wrap/internal/mixerstrips.h"
 
 #include "au3-xml/XMLWriter.h"
 
@@ -3425,5 +3426,151 @@ TEST_F(Au3RecordTests, BusRoutingAppliesInExportWithBusEffectsVolumeAndSends)
     bus->SetMute(true);
     const auto muted = renderMix(projectRef(), rate, 2.0);
     EXPECT_LT(windowDb(muted, rate, 0.5, 1.5), -100.0);
+}
+}
+
+namespace au::record {
+namespace {
+namespace mx = au::au3::mixer;
+namespace brm = au::au3::busrouting;
+
+const mx::Strip* stripOf(const std::vector<mx::Strip>& all, long long id)
+{
+    for (const auto& s : all) {
+        if (s.trackId == id) {
+            return &s;
+        }
+    }
+    return nullptr;
+}
+}
+
+TEST_F(Au3RecordTests, MixerStripsListTracksThenBusesThenMaster)
+{
+    Au3WaveTrack* a = addSelectedMonoTrack();
+    Au3WaveTrack* bus = brm::addBusTrack(projectRef());
+    Au3WaveTrack* b = addSelectedMonoTrack();
+    ASSERT_TRUE(a && b && bus);
+    bus->SetName(wxT("Drums"));
+    const std::string busId = BusRoutingData::Get(*bus).busId;
+    ASSERT_TRUE(brm::setOutput(projectRef(), *a, busId));
+    ASSERT_TRUE(brm::setSend(projectRef(), *b, busId, 0.25f));
+    a->SetVolume(0.5f);
+    a->SetPan(-0.5f);
+    b->SetMute(true);
+    bus->SetSolo(true);
+
+    const auto all = mx::strips(projectRef());
+    ASSERT_EQ(all.size(), 4u);
+    // tracks in track order, then buses, then master last
+    EXPECT_EQ(all[0].trackId, a->GetId());
+    EXPECT_EQ(all[1].trackId, b->GetId());
+    EXPECT_EQ(all[2].trackId, bus->GetId());
+    EXPECT_EQ(all[2].kind, mx::StripKind::Bus);
+    EXPECT_EQ(all[3].kind, mx::StripKind::Master);
+    EXPECT_EQ(all[3].trackId, mx::Strip::MasterId);
+
+    EXPECT_NEAR(all[0].volumeDb, -6.02, 0.01);
+    EXPECT_FLOAT_EQ(all[0].pan, -0.5f);
+    EXPECT_EQ(all[0].channels, 1);
+    EXPECT_EQ(all[0].outputBusId, busId);
+    EXPECT_EQ(mx::outputName(projectRef(), all[0]), "Drums");
+    EXPECT_TRUE(all[1].mute);
+    EXPECT_EQ(mx::outputName(projectRef(), all[1]), "Master");
+    ASSERT_EQ(all[1].sends.size(), 1u);
+    EXPECT_EQ(all[1].sends[0].busId, busId);
+    EXPECT_FLOAT_EQ(all[1].sends[0].level, 0.25f);
+    EXPECT_TRUE(all[2].solo);
+    EXPECT_EQ(all[2].channels, 2);
+    EXPECT_EQ(all[2].busId, busId);
+
+    // silence is shown at the bottom of the fader range
+    a->SetVolume(0.0f);
+    EXPECT_DOUBLE_EQ(mx::strips(projectRef())[0].volumeDb, -60.0);
+}
+
+TEST_F(Au3RecordTests, MixerStripsShowInsertsOfTracksBusesAndMaster)
+{
+    RealtimeEffectState::EffectFactory::Scope scope { &builtinFactory };
+    Au3WaveTrack* a = addSelectedMonoTrack();
+    Au3WaveTrack* bus = brm::addBusTrack(projectRef());
+    auto comp = addEffect(RealtimeEffectList::Get(*a), kCompressorId);
+    addEffect(RealtimeEffectList::Get(*a), kNoiseId);
+    addEffect(RealtimeEffectList::Get(*bus), kCompressorId);
+    addEffect(RealtimeEffectList::Get(projectRef()), kNoiseId);
+    comp->SetActive(false);
+    RealtimeEffectList::Get(*bus).SetActive(false);
+
+    const auto all = mx::strips(projectRef());
+    const auto* sa = stripOf(all, a->GetId());
+    const auto* sb = stripOf(all, bus->GetId());
+    const auto* sm = stripOf(all, mx::Strip::MasterId);
+    ASSERT_TRUE(sa && sb && sm);
+    ASSERT_EQ(sa->inserts.size(), 2u);
+    EXPECT_EQ(sa->inserts[0].pluginId, kCompressorId.ToStdString());
+    EXPECT_FALSE(sa->inserts[0].active);
+    EXPECT_EQ(sa->inserts[1].pluginId, kNoiseId.ToStdString());
+    EXPECT_TRUE(sa->inserts[1].active);
+    EXPECT_TRUE(sa->insertsActive);
+    ASSERT_EQ(sb->inserts.size(), 1u);
+    EXPECT_FALSE(sb->insertsActive);
+    ASSERT_EQ(sm->inserts.size(), 1u);
+    EXPECT_EQ(sm->inserts[0].pluginId, kNoiseId.ToStdString());
+}
+
+TEST_F(Au3RecordTests, MixerStripEditsAreSavedAndUndoable)
+{
+    RealtimeEffectState::EffectFactory::Scope scope { &builtinFactory };
+    Au3WaveTrack* a = addSelectedMonoTrack();
+    const auto aId = a->GetId();
+    auto comp = addEffect(RealtimeEffectList::Get(*a), kCompressorId);
+    auto& history = ::ProjectHistory::Get(projectRef());
+    history.InitialState();
+    auto push = [&](const char* what) {
+        history.PushState(::TranslatableString::untranslatable(wxString(what)),
+                          ::TranslatableString::untranslatable(wxString(what)));
+    };
+    auto undo = [&] {
+        UndoManager::Get(projectRef()).Undo([&history](const UndoStackElem& elem) { history.PopState(elem.state); });
+    };
+
+    // what the mixer does through the existing services: fader and pan push an undo state when
+    // released; mute/solo and insert bypass modify the current state (as in the track panel)
+    a->SetVolume(0.25f);
+    push("Volume");
+    DomAccessor::findWaveTrack(projectRef(), aId)->SetPan(0.75f);
+    push("Pan");
+    DomAccessor::findWaveTrack(projectRef(), aId)->SetMute(true);
+    RealtimeEffectList::Get(*DomAccessor::findWaveTrack(projectRef(), aId)).GetStateAt(0)->SetActive(false);
+    history.ModifyState(false);
+
+    auto stripA = [&] { return *stripOf(mx::strips(projectRef()), aId); };
+    EXPECT_NEAR(stripA().volumeDb, -12.04, 0.01);
+    EXPECT_FLOAT_EQ(stripA().pan, 0.75f);
+    EXPECT_TRUE(stripA().mute);
+    EXPECT_FALSE(stripA().inserts.at(0).active);
+
+    // saved with the track (volume, pan, mute, and the bypassed effect)
+    XMLStringWriter xml;
+    DomAccessor::findWaveTrack(projectRef(), aId)->WriteXML(xml);
+    EXPECT_NE(xml.find(wxT("mute=\"1\"")), wxString::npos);
+    EXPECT_NE(xml.find(wxT("pan=\"0.75\"")), wxString::npos);
+    EXPECT_NE(xml.find(wxT("gain=\"0.25\"")), wxString::npos);
+    EXPECT_NE(xml.find(wxT("active=\"0\"")), wxString::npos);
+
+    undo(); // back to "Volume": pan and mute revert
+    EXPECT_FLOAT_EQ(stripA().pan, 0.0f);
+    EXPECT_FALSE(stripA().mute);
+    EXPECT_NEAR(stripA().volumeDb, -12.04, 0.01);
+    undo();
+    EXPECT_NEAR(stripA().volumeDb, 0.0, 0.01);
+    auto redo = [&] {
+        UndoManager::Get(projectRef()).Redo([&history](const UndoStackElem& elem) { history.PopState(elem.state); });
+    };
+    redo();
+    redo();
+    EXPECT_NEAR(stripA().volumeDb, -12.04, 0.01);
+    EXPECT_FLOAT_EQ(stripA().pan, 0.75f);
+    EXPECT_TRUE(stripA().mute);
 }
 }

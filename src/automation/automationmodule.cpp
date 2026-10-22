@@ -7,6 +7,7 @@
 #include "view/clipgainmodel.h"
 #include "view/paramautomationlanemodel.h"
 #include "view/busroutinggraphmodel.h"
+#include "view/mixerpanelmodel.h"
 
 #include <QtQml/qqml.h>
 
@@ -27,6 +28,7 @@ void AutomationModule::registerUiTypes()
     qmlRegisterType<ClipGainModel>("Audacity.Automation", 1, 0, "ClipGainModel");
     qmlRegisterType<ParamAutomationLaneModel>("Audacity.Automation", 1, 0, "ParamAutomationLaneModel");
     qmlRegisterType<BusRoutingGraphModel>("Audacity.Automation", 1, 0, "BusRoutingGraphModel");
+    qmlRegisterType<MixerPanelModel>("Audacity.Automation", 1, 0, "MixerPanelModel");
 }
 
 muse::modularity::IContextSetup* AutomationModule::newContext(

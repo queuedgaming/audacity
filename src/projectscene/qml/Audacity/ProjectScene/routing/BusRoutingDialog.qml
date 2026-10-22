@@ -155,16 +155,16 @@ StyledDialogView {
                 }
 
                 FlatRadioButton {
-                    width: 90
-                    height: 28
+                    Layout.preferredWidth: 90
+                    Layout.preferredHeight: 28
                     text: qsTrc("automation", "Output")
                     checked: !root.sendMode
                     onToggled: root.sendMode = false
                 }
 
                 FlatRadioButton {
-                    width: 90
-                    height: 28
+                    Layout.preferredWidth: 90
+                    Layout.preferredHeight: 28
                     text: qsTrc("automation", "Send")
                     checked: root.sendMode
                     onToggled: root.sendMode = true

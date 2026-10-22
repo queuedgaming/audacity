@@ -66,6 +66,7 @@ MenuItemList TrackContextMenuModel::makeStereoTrackItems()
         makeItemWithArg("toggle-vertical-rulers"),
         makeItemWithArg("track-toggle-param-automation"),
         makeItemWithArg("track-bus-routing"),
+        makeItemWithArg("track-mixer"),
         makeMenu(muse::TranslatableString("trackcontextmenu", "Meters && monitoring"), makeMeterMonitoringItems()),
         makeSeparator(),
         makeItemWithArg("track-swap-channels"),
@@ -93,6 +94,7 @@ MenuItemList TrackContextMenuModel::makeMonoTrackItems()
         makeItemWithArg("toggle-vertical-rulers"),
         makeItemWithArg("track-toggle-param-automation"),
         makeItemWithArg("track-bus-routing"),
+        makeItemWithArg("track-mixer"),
         makeMenu(muse::TranslatableString("trackcontextmenu", "Meters && monitoring"), makeMeterMonitoringItems()),
         makeSeparator(),
         makeItemWithArg("track-make-stereo"),
@@ -176,10 +178,12 @@ void TrackContextMenuModel::load()
     updateRecordingState();
 
     if (track.value().type != trackedit::TrackType::Label) {
-        MenuItem& routingItem = findItem(ActionCode("track-bus-routing"));
-        auto routingState = routingItem.state();
-        routingState.enabled = true;
-        routingItem.setState(routingState);
+        for (const char* code : { "track-bus-routing", "track-mixer" }) {
+            MenuItem& routingItem = findItem(ActionCode(code));
+            auto routingState = routingItem.state();
+            routingState.enabled = true;
+            routingItem.setState(routingState);
+        }
     }
 
     if (paramAutomation() && track.value().type != trackedit::TrackType::Label) {
@@ -213,6 +217,10 @@ void TrackContextMenuModel::handleMenuItem(const QString& itemId)
 {
     if (itemId == "track-rename") {
         emit trackRenameRequested();
+    } else if (itemId == "track-mixer") {
+        if (interactive()) {
+            interactive()->open("audacity://projectscene/mixer");
+        }
     } else if (itemId == "track-bus-routing") {
         if (interactive()) {
             interactive()->open("audacity://projectscene/busrouting");
