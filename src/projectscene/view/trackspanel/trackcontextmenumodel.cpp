@@ -65,6 +65,7 @@ MenuItemList TrackContextMenuModel::makeStereoTrackItems()
         makeMenu(muse::TranslatableString("trackcontextmenu", "Track color"), makeTrackColorItems(), TRACK_COLOR_MENU_ID),
         makeItemWithArg("toggle-vertical-rulers"),
         makeItemWithArg("track-toggle-param-automation"),
+        makeItemWithArg("track-bus-routing"),
         makeMenu(muse::TranslatableString("trackcontextmenu", "Meters && monitoring"), makeMeterMonitoringItems()),
         makeSeparator(),
         makeItemWithArg("track-swap-channels"),
@@ -91,6 +92,7 @@ MenuItemList TrackContextMenuModel::makeMonoTrackItems()
         makeMenu(muse::TranslatableString("trackcontextmenu", "Track color"), makeTrackColorItems(), TRACK_COLOR_MENU_ID),
         makeItemWithArg("toggle-vertical-rulers"),
         makeItemWithArg("track-toggle-param-automation"),
+        makeItemWithArg("track-bus-routing"),
         makeMenu(muse::TranslatableString("trackcontextmenu", "Meters && monitoring"), makeMeterMonitoringItems()),
         makeSeparator(),
         makeItemWithArg("track-make-stereo"),
@@ -173,6 +175,13 @@ void TrackContextMenuModel::load()
     updateTrackViewCheckedState();
     updateRecordingState();
 
+    if (track.value().type != trackedit::TrackType::Label) {
+        MenuItem& routingItem = findItem(ActionCode("track-bus-routing"));
+        auto routingState = routingItem.state();
+        routingState.enabled = true;
+        routingItem.setState(routingState);
+    }
+
     if (paramAutomation() && track.value().type != trackedit::TrackType::Label) {
         MenuItem& item = findItem(ActionCode("track-toggle-param-automation"));
         auto state = item.state();
@@ -204,6 +213,10 @@ void TrackContextMenuModel::handleMenuItem(const QString& itemId)
 {
     if (itemId == "track-rename") {
         emit trackRenameRequested();
+    } else if (itemId == "track-bus-routing") {
+        if (interactive()) {
+            interactive()->open("audacity://projectscene/busrouting");
+        }
     } else if (itemId == "track-toggle-param-automation") {
         if (paramAutomation()) {
             paramAutomation()->setShown(m_trackId, !paramAutomation()->isShown(m_trackId));

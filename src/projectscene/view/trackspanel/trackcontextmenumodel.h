@@ -10,6 +10,7 @@
 #include "iprojectsceneconfiguration.h"
 #include "trackedit/iprojecthistory.h"
 #include "automation/iparamautomationinteraction.h"
+#include "framework/interactive/iinteractive.h"
 #include "trackedit/iselectioncontroller.h"
 #include "trackedit/internal/itracknavigationcontroller.h"
 
@@ -24,6 +25,7 @@ class TrackContextMenuModel : public muse::uicomponents::AbstractMenuModel
     muse::ContextInject<context::IGlobalContext> globalContext{ this };
     muse::ContextInject<trackedit::IProjectHistory> projectHistory{ this };
     muse::ContextInject<automation::IParamAutomationInteraction> paramAutomation{ this };
+    muse::ContextInject<muse::IInteractive> interactive{ this };
     muse::ContextInject<trackedit::ISelectionController> selectionController{ this };
     muse::ContextInject<trackedit::ITrackNavigationController> trackNavigationController{ this };
 

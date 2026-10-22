@@ -14,6 +14,11 @@ set(MODULE_SRC
     ${CMAKE_CURRENT_LIST_DIR}/internal/au3/au3paramautomationinteraction.h
     ${CMAKE_CURRENT_LIST_DIR}/view/paramautomationlanemodel.cpp
     ${CMAKE_CURRENT_LIST_DIR}/view/paramautomationlanemodel.h
+    ${CMAKE_CURRENT_LIST_DIR}/ibusroutinginteraction.h
+    ${CMAKE_CURRENT_LIST_DIR}/internal/au3/au3busroutinginteraction.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/internal/au3/au3busroutinginteraction.h
+    ${CMAKE_CURRENT_LIST_DIR}/view/busroutinggraphmodel.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/view/busroutinggraphmodel.h
 
     ${CMAKE_CURRENT_LIST_DIR}/internal/au3/au3clipgaininteraction.cpp
     ${CMAKE_CURRENT_LIST_DIR}/internal/au3/au3clipgaininteraction.h

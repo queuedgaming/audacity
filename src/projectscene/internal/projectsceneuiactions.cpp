@@ -158,6 +158,14 @@ static UiActionList STATIC_ACTIONS = {
              TranslatableString("action_description", "Show vertical rulers"),
              Checkable::Yes
              ),
+    UiAction("track-bus-routing",
+             au::context::UiCtxAny,
+             au::context::CTX_ANY,
+             //: Action title: shown as a menu item or a button label; keep it short
+             TranslatableString("action", "Bus routing…"),
+             //: Action description: shown as a tooltip; can be a full sentence
+             TranslatableString("action_description", "Show the routing graph of tracks, buses and master")
+             ),
     UiAction("track-toggle-param-automation",
              au::context::UiCtxAny,
              au::context::CTX_ANY,

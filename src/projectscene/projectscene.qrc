@@ -4,6 +4,7 @@
         <file>qml/Audacity/ProjectScene/tracksitemsview/TracksItemsView.qml</file>
         <file>qml/Audacity/ProjectScene/tracksitemsview/TrackClipsContainer.qml</file>
         <file>qml/Audacity/ProjectScene/tracksitemsview/ParamAutomationLane.qml</file>
+        <file>qml/Audacity/ProjectScene/routing/BusRoutingDialog.qml</file>
         <file>qml/Audacity/ProjectScene/tracksitemsview/ClipItem.qml</file>
         <file>qml/Audacity/ProjectScene/tracksitemsview/Timeline.qml</file>
         <file>qml/Audacity/ProjectScene/tracksitemsview/ItemsSelection.qml</file>

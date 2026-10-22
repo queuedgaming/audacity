@@ -128,6 +128,8 @@ void ProjectSceneModule::resolveImports()
                            "Audacity/ProjectScene/tracksitemsview/labeleditor/LabelEditorDialog.qml");
         ir->registerQmlUri(muse::Uri("audacity://projectscene/addnewlabeltrack"),
                            "Audacity/ProjectScene/tracksitemsview/labeleditor/AddNewLabelTrackDialog.qml");
+        ir->registerQmlUri(muse::Uri("audacity://projectscene/busrouting"),
+                           "Audacity/ProjectScene/routing/BusRoutingDialog.qml");
         ir->registerQmlUri(muse::Uri("audacity://projectscene/geteffects"),
                            "Audacity/ProjectScene/toolbars/GetEffectsDialog.qml");
     }
