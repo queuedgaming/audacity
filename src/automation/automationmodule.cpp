@@ -1,8 +1,10 @@
 #include "automationmodule.h"
 
 #include "internal/au3/au3clipgaininteraction.h"
+#include "internal/au3/au3paramautomationinteraction.h"
 
 #include "view/clipgainmodel.h"
+#include "view/paramautomationlanemodel.h"
 
 #include <QtQml/qqml.h>
 
@@ -21,6 +23,7 @@ std::string AutomationModule::moduleName() const
 void AutomationModule::registerUiTypes()
 {
     qmlRegisterType<ClipGainModel>("Audacity.Automation", 1, 0, "ClipGainModel");
+    qmlRegisterType<ParamAutomationLaneModel>("Audacity.Automation", 1, 0, "ParamAutomationLaneModel");
 }
 
 muse::modularity::IContextSetup* AutomationModule::newContext(
@@ -36,4 +39,5 @@ muse::modularity::IContextSetup* AutomationModule::newContext(
 void AutomationContext::registerExports()
 {
     ioc()->registerExport<IClipGainInteraction>(mname, std::make_shared<Au3ClipGainInteraction>(iocContext()));
+    ioc()->registerExport<IParamAutomationInteraction>(mname, std::make_shared<Au3ParamAutomationInteraction>(iocContext()));
 }

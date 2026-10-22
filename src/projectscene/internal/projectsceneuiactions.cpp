@@ -158,6 +158,15 @@ static UiActionList STATIC_ACTIONS = {
              TranslatableString("action_description", "Show vertical rulers"),
              Checkable::Yes
              ),
+    UiAction("track-toggle-param-automation",
+             au::context::UiCtxAny,
+             au::context::CTX_ANY,
+             //: Action title: shown as a menu item or a button label; keep it short
+             TranslatableString("action", "Show automation"),
+             //: Action description: shown as a tooltip; can be a full sentence
+             TranslatableString("action_description", "Show or hide the effect parameter automation lane of the track"),
+             Checkable::Yes
+             ),
     UiAction("show-master-track",
              au::context::UiCtxAny,
              au::context::CTX_ANY,

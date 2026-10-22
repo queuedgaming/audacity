@@ -752,6 +752,20 @@ TrackItemsContainer {
                 }
             }
 
+            //! plugin parameter automation lane (overlay on the lower part of the track)
+            ParamAutomationLane {
+                id: paramAutomationLane
+
+                trackId: root.trackId
+                context: root.context
+
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                height: Math.max(64, (root.height - root.headerHeight) * 0.55)
+                z: 5
+            }
+
             //! clip
             ChannelSplitter {
                 id: channelSplitter
