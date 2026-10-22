@@ -15,6 +15,7 @@
 
 #include "au3-audio-devices/AudioIOBase.h" // to inherit
 #include "au3-mixer/AudioIOSequences.h"
+#include "au3-mixer/BusRouting.h"
 #include "PlaybackSchedule.h" // member variable
 #include "RingBuffer.h"
 #include "PlaythroughProcessor.h"
@@ -257,6 +258,10 @@ public:
     /*! Read by worker threads but unchanging during playback */
     RingBuffers mPlaybackBuffers;
     std::vector<Track> mPlaybackTracks;
+    //! Bus routing between mPlaybackSequences (see au3-mixer/BusRouting.h); fixed for the stream
+    BusRoutingPlan mBusRouting;
+    std::vector<int> mBusRoutingOrder;
+    std::vector<unsigned> mBusFirstBuffer; //!< first index into mProcessingBuffers per sequence
     ConstPlayableSequences mPlaybackSequences;
     // Old volume is used in playback in linearly interpolating
     // the volume.
@@ -624,6 +629,8 @@ private:
     //! First part of SequenceBufferExchange
     void FillPlayBuffers();
 
+    void ProcessRoutedMix(std::optional<RealtimeEffects::ProcessingScope>& pScope, size_t samplesAvailable,
+                          double automationTime);
     bool ProcessPlaybackSlices(
         std::optional<RealtimeEffects::ProcessingScope>& pScope, size_t available);
 

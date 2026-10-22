@@ -19,6 +19,7 @@
 #include <optional>
 
 #include "DownmixStage.h"
+#include "BusRouting.h"
 
 class sampleCount;
 class BoundedEnvelope;
@@ -164,6 +165,7 @@ private:
     std::vector<EffectSettings> mSettings;
     std::vector<AudioGraph::Buffers> mStageBuffers;
     std::vector<std::unique_ptr<EffectStage> > mStages;
+    std::vector<std::unique_ptr<BusInjectStage> > mBusInjects; //!< bus routing (see BusRouting.h)
     std::unique_ptr<AudioGraph::Source> mDownmixStage;
     std::unique_ptr<AudioGraph::Source> mMasterDownmixStage;
     AudioGraph::Source* mDownstream{};

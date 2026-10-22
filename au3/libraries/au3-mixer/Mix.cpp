@@ -151,7 +151,24 @@ Mixer::Mixer(
     mSettings.reserve(nStages);
     mStageBuffers.reserve(nStages);
 
+    // Bus routing between the inputs (no-op unless the application installed a provider
+    // and the project routes something away from master)
+    BusRoutingPlan routing;
+    {
+        std::vector<const WideSampleSequence*> seqs;
+        for (auto& input : mInputs) {
+            seqs.push_back(input.pSequence.get());
+        }
+        routing = MakeBusRoutingPlan(seqs);
+    }
+    const bool routed = routing.Active();
+    std::vector<BusInjectStage*> injects(mInputs.size(), nullptr);
+    if (routed) {
+        mBusInjects.reserve(mInputs.size());
+    }
+
     size_t i = 0;
+    size_t iInput = 0;
     std::vector<std::unique_ptr<DownmixSource> > downmixSources;
     for (auto& input : mInputs) {
         const auto& sequence = input.pSequence;
@@ -163,6 +180,13 @@ Mixer::Mixer(
         auto& source = mSources.emplace_back(sequence, BufferSize(), outRate,
                                              warpOptions, highQuality, mayThrow, mTimesAndSpeed);
         AudioGraph::Source* pDownstream = &source;
+        if (routed && routing.nodes[iInput].isBus) {
+            auto& inject = mBusInjects.emplace_back(
+                std::make_unique<BusInjectStage>(*pDownstream, std::max<size_t>(2, sequence->NChannels()), BufferSize()));
+            injects[iInput] = inject.get();
+            pDownstream = inject.get();
+        }
+        ++iInput;
         for (const auto& stage : input.stages) {
             if (
                 auto& pNewDownstream
@@ -181,10 +205,20 @@ Mixer::Mixer(
         i += sequence->NChannels();
     }
 
+    auto makeDownmix = [&](ApplyVolume applyVolume) -> std::unique_ptr<AudioGraph::Source> {
+        if (!routed) {
+            return std::make_unique<DownmixStage>(std::move(downmixSources), mNumChannels, mBufferSize, applyVolume);
+        }
+        std::vector<RoutedDownmixStage::Input> routedInputs;
+        for (size_t k = 0; k < downmixSources.size(); ++k) {
+            routedInputs.push_back({ std::move(downmixSources[k]), injects[k] });
+        }
+        return std::make_unique<RoutedDownmixStage>(std::move(routedInputs), std::move(routing), mNumChannels,
+                                                    mBufferSize, applyVolume != ApplyVolume::Discard);
+    };
+
     if (mMasterEffects && !mMasterEffects->empty()) {
-        mDownmixStage = std::make_unique<DownmixStage>(
-            std::move(downmixSources), mNumChannels, mBufferSize, ApplyVolume::MapChannels
-            );
+        mDownmixStage = makeDownmix(ApplyVolume::MapChannels);
 
         AudioGraph::Source* pDownstream = mDownmixStage.get();
         for (const auto& stage : *mMasterEffects) {
@@ -203,12 +237,7 @@ Mixer::Mixer(
             std::move(masterDownmixSources), mNumChannels, mBufferSize, ApplyVolume::Mixdown);
         mDownstream = mMasterDownmixStage.get();
     } else {
-        mDownmixStage = std::make_unique<DownmixStage>(
-            std::move(downmixSources),
-            mNumChannels,
-            mBufferSize,
-            mApplyVolume
-            );
+        mDownmixStage = makeDownmix(mApplyVolume);
         mDownstream = mDownmixStage.get();
     }
 

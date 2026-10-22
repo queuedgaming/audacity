@@ -811,6 +811,21 @@ void AudioIO::ResetCaptureRouting()
 void AudioIO::ConfigureCaptureRouting(size_t inputChannelsCount)
 {
     ResetCaptureRouting();
+    {
+        std::vector<const WideSampleSequence*> seqs;
+        mBusFirstBuffer.clear();
+        unsigned first = 0;
+        for (const auto& seq : mPlaybackSequences) {
+            seqs.push_back(seq.get());
+            mBusFirstBuffer.push_back(first);
+            first += seq ? seq->NChannels() : 0;
+        }
+        mBusRouting = MakeBusRoutingPlan(seqs);
+        if (!mBusRouting.Active()) {
+            mBusRouting = {};
+        }
+        mBusRoutingOrder = mBusRouting.ProcessingOrder();
+    }
 
     if (mCaptureSequences.empty() || inputChannelsCount == 0) {
         return;
@@ -2093,6 +2108,114 @@ void AudioIO::FillPlayBuffers()
 
 #define stackAllocate(T, count) static_cast<T*>(alloca(count * sizeof(T)))
 
+namespace {
+struct BusProcessContext {
+    AudioIO* io;
+    std::optional<RealtimeEffects::ProcessingScope>* scope;
+    const ConstPlayableSequences* seqs;
+    float** scratch; //!< mScratchPointers
+    const bool* silent;
+    unsigned numPlaybackChannels;
+    double automationTime;
+    double rate;
+};
+}
+
+void AudioIO::ProcessRoutedMix(std::optional<RealtimeEffects::ProcessingScope>& pScope,
+                               size_t samplesAvailable, double automationTime)
+{
+    // Allocation-free: plan and buffers are prepared before the stream starts
+    const size_t nSeq = mPlaybackSequences.size();
+    const auto seqs = stackAllocate(const WideSampleSequence*, nSeq);
+    const auto first = stackAllocate(unsigned, nSeq);
+    const auto nChannels = stackAllocate(unsigned, nSeq);
+    const auto channels = stackAllocate(float*, mProcessingBuffers.size() + 1);
+    for (size_t i = 0; i < mProcessingBuffers.size(); ++i) {
+        channels[i] = mProcessingBuffers[i].data();
+    }
+    for (size_t i = 0; i < nSeq; ++i) {
+        const auto& seq = mPlaybackSequences[i];
+        seqs[i] = seq.get();
+        first[i] = mBusFirstBuffer[i];
+        nChannels[i] = seq ? std::min<unsigned>(seq->NChannels(), mNumPlaybackChannels) : 0;
+    }
+    const auto master = stackAllocate(float*, mNumPlaybackChannels);
+    for (unsigned c = 0; c < mNumPlaybackChannels; ++c) {
+        master[c] = mMasterBuffers[c].data();
+    }
+
+    const auto silent = stackAllocate(bool, nSeq);
+    for (size_t i = 0; i < nSeq; ++i) {
+        silent[i] = mPlaybackSequences[i] && SequenceShouldBeSilent(*mPlaybackSequences[i]);
+    }
+    BusProcessContext ctx { this, &pScope, &mPlaybackSequences, mScratchPointers.data(), silent,
+                            mNumPlaybackChannels, automationTime, mRate };
+    BusRouteBlock(mBusRouting, mBusRoutingOrder, seqs, channels, first, nChannels, master,
+                  mNumPlaybackChannels, samplesAvailable,
+                  [](void* p, int busIndex, float* const* busChannels, unsigned nCh, size_t len) {
+        auto& c = *static_cast<BusProcessContext*>(p);
+        const auto& seq = (*c.seqs)[size_t(busIndex)];
+        const auto channelGroup = seq->FindChannelGroup();
+        if (*c.scope && channelGroup) {
+            const auto pointers = stackAllocate(float*, c.numPlaybackChannels);
+            auto scratch = &c.scratch[c.numPlaybackChannels + 1];
+            for (unsigned i = 0; i < c.numPlaybackChannels; ++i) {
+                if (i < nCh) {
+                    pointers[i] = busChannels[i];
+                } else {
+                    pointers[i] = *scratch++;
+                    std::fill_n(pointers[i], len, .0f);
+                }
+            }
+            RealtimeEffectState::SetProcessTime(c.automationTime, c.rate);
+            // Latency reported by bus effects is not compensated (see limitations)
+            (*c.scope)->Process(channelGroup, &pointers[0], c.scratch,
+                                c.scratch[c.numPlaybackChannels], c.numPlaybackChannels, len);
+            RealtimeEffectState::SetProcessTime(-1.0, 0.0);
+        }
+        if (c.silent[size_t(busIndex)]) {
+            for (unsigned ch = 0; ch < nCh; ++ch) {
+                std::fill_n(busChannels[ch], len, 0.0f);
+            }
+        }
+    }, &ctx);
+
+    for (const int idx : mBusRoutingOrder) {
+        const auto& seq = mPlaybackSequences[size_t(idx)];
+        if (!seq) {
+            continue;
+        }
+        const unsigned first = mBusFirstBuffer[size_t(idx)];
+        const unsigned nCh = nChannels[size_t(idx)];
+        float* src[2] { channels[first], nCh > 1 ? channels[first + 1] : nullptr };
+        // Per-track ring buffers (meters): post-fader signal, as in the unrouted path.
+        // Nothing reads this node's buffers after this point, so scale in place.
+        auto& track = mPlaybackTracks[size_t(idx)];
+        if (nCh > 1) {
+            for (unsigned n = 0; n < nCh && n < track.mBuffers.size(); ++n) {
+                const float vol = seq->GetChannelVolume(int(n));
+                float* buf = mProcessingBuffers[first + n].data();
+                for (size_t i = 0; i < samplesAvailable; ++i) {
+                    buf[i] *= vol;
+                }
+                track.mBuffers[n]->Put(reinterpret_cast<constSamplePtr>(buf), floatSample, samplesAvailable, 0);
+            }
+        } else if (nCh == 1) {
+            float maxVolume = 0.0f;
+            for (unsigned n = 0; n < mNumPlaybackChannels; ++n) {
+                maxVolume = std::max(maxVolume, seq->GetChannelVolume(int(n)));
+            }
+            float* buf = src[0];
+            for (size_t i = 0; i < samplesAvailable; ++i) {
+                buf[i] *= maxVolume;
+            }
+            for (unsigned n = 0; n < mNumPlaybackChannels && n < track.mBuffers.size(); ++n) {
+                track.mBuffers[n]->Put(reinterpret_cast<constSamplePtr>(buf), floatSample, samplesAvailable, 0);
+            }
+        }
+    }
+}
+
 bool AudioIO::ProcessPlaybackSlices(
     std::optional<RealtimeEffects::ProcessingScope>& pScope, size_t available)
 {
@@ -2197,9 +2320,17 @@ bool AudioIO::ProcessPlaybackSlices(
         const auto pointers = stackAllocate(float*, mNumPlaybackChannels);
 
         int bufferIndex = 0;
+        size_t seqIndex = 0;
         for (const auto& seq : mPlaybackSequences) {
+            const bool isBus = seqIndex < mBusRouting.nodes.size() && mBusRouting.nodes[seqIndex].isBus;
+            ++seqIndex;
             if (!seq) {
                 continue;//no similar check in convert-to-float part
+            }
+            if (isBus) {
+                // processed after the audio routed into it is summed (ProcessRoutedMix)
+                bufferIndex += seq->NChannels();
+                continue;
             }
             const auto channelGroup = seq->FindChannelGroup();
             if (!channelGroup) {
@@ -2278,7 +2409,9 @@ bool AudioIO::ProcessPlaybackSlices(
         buffer.resize(samplesAvailable, 0);
     }
 
-    {
+    if (!mBusRouting.nodes.empty()) {
+        ProcessRoutedMix(pScope, samplesAvailable, automationTime);
+    } else {
         unsigned bufferIndex = 0;
         for (auto& track :  mPlaybackTracks) {
             auto seq = track.mSequence;

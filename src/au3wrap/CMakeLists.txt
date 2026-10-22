@@ -67,6 +67,8 @@ set(MODULE_SRC
     ${CMAKE_CURRENT_LIST_DIR}/internal/projectkey.cpp
     ${CMAKE_CURRENT_LIST_DIR}/internal/takelanes.h
     ${CMAKE_CURRENT_LIST_DIR}/internal/paramautomation.h
+    ${CMAKE_CURRENT_LIST_DIR}/internal/busrouting.h
+    ${CMAKE_CURRENT_LIST_DIR}/internal/busrouting.cpp
     ${CMAKE_CURRENT_LIST_DIR}/internal/paramautomation.cpp
     ${CMAKE_CURRENT_LIST_DIR}/internal/paramautomation_formats.h
     )
@@ -134,6 +136,8 @@ set(MODULE_LINK_PUBLIC
         au3-track
         au3-utility
         au3-wave-track
+        au3-project-rate
+        au3-mixer
 
         # TODO: this isn't nice, we should avoid Wx dependencies in AU4 modules.
         # wxBase must stay PUBLIC for now: the au3 libraries link wxBase PRIVATE,

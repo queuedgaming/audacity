@@ -28,6 +28,8 @@ set( SOURCES
    DownmixSource.h
    DownmixStage.cpp
    DownmixStage.h
+   BusRouting.cpp
+   BusRouting.h
    EffectStage.cpp
    EffectStage.h
    Envelope.cpp

@@ -2,6 +2,7 @@
 * Audacity: A Digital Audio Editor
 */
 #include "au3wrapmodule.h"
+#include "internal/busrouting.h"
 
 #include <wx/log.h>
 
@@ -60,6 +61,8 @@ void Au3WrapModule::onPreInit(const muse::IApplication::RunMode&)
 
 void Au3WrapModule::onInit(const muse::IApplication::RunMode&)
 {
+    au::au3::busrouting::install();
+
     bool ok = ProjectFileIO::InitializeSQL();
     if (!ok) {
         LOGE() << "failed init sql";
