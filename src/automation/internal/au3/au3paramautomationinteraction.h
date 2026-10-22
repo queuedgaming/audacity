@@ -31,6 +31,7 @@ public:
     std::optional<ParamTarget> activeTarget(trackedit::TrackId trackId) const override;
     bool setActiveTarget(trackedit::TrackId trackId, const ParamTarget& target) override;
     AutomationPoints activePoints(trackedit::TrackId trackId) const override;
+    std::string valueText(trackedit::TrackId trackId, double value) const override;
     int addPoint(trackedit::TrackId trackId, double t, double value, bool completed) override;
     bool setPoint(trackedit::TrackId trackId, int index, double t, double value, bool completed) override;
     bool removePoint(trackedit::TrackId trackId, int index, bool completed) override;

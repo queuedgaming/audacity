@@ -70,7 +70,8 @@ QVariantList ParamAutomationLaneModel::targetOptions() const
     QVariantList options;
     for (size_t i = 0; i < m_targets.size(); ++i) {
         QVariantMap option;
-        option["text"] = QString::fromStdString(m_targets[i].effectName + " \u00b7 " + m_targets[i].paramKey);
+        option["text"] = QString::fromStdString(m_targets[i].effectName + " \u00b7 " + m_targets[i].paramName
+                                                  + (m_targets[i].units.empty() ? std::string() : " (" + m_targets[i].units + ")"));
         option["value"] = int(i);
         options << option;
     }
@@ -92,7 +93,7 @@ int ParamAutomationLaneModel::currentTargetIndex() const
 
 QString ParamAutomationLaneModel::currentTargetName() const
 {
-    return m_current ? QString::fromStdString(m_current->effectName + " \u00b7 " + m_current->paramKey) : QString();
+    return m_current ? QString::fromStdString(m_current->effectName + " \u00b7 " + m_current->paramName) : QString();
 }
 
 QVector<QPointF> ParamAutomationLaneModel::points() const { return m_points; }
@@ -134,6 +135,12 @@ void ParamAutomationLaneModel::cancelDrag()
 
 QString ParamAutomationLaneModel::valueText(double value) const
 {
+    if (m_current && interaction()) {
+        const std::string text = interaction()->valueText(m_trackId, value);
+        if (!text.empty()) {
+            return QString::fromStdString(text);
+        }
+    }
     if (m_current && m_current->isInteger) {
         return QString::number(std::lround(value));
     }

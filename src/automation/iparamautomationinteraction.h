@@ -24,6 +24,9 @@ struct ParamTarget {
     double maxValue = 1.0;
     double defaultValue = 0.0; //!< current unautomated value of the effect
     bool isInteger = false;
+    std::string paramName; //!< display name of the parameter (plugin title / built-in key)
+    std::string units;     //!< e.g. "dB" (empty if none or unknown)
+    bool normalized = false; //!< VST3: lane values are the plugin's normalized 0..1
 
     bool sameAs(const ParamTarget& o) const
     {
@@ -53,6 +56,9 @@ public:
     virtual bool setPoint(trackedit::TrackId trackId, int index, double t, double value, bool completed) = 0;
     virtual bool removePoint(trackedit::TrackId trackId, int index, bool completed) = 0;
     virtual void cancelEdit(trackedit::TrackId trackId) = 0;
+
+    //! Display text of `value` on the active lane, using the plugin's own formatting where available
+    virtual std::string valueText(trackedit::TrackId trackId, double value) const = 0;
 
     //! Re-attach the automation to the realtime effect states (after undo/redo, load, edits)
     virtual void reinstall() = 0;

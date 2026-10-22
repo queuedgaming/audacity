@@ -74,8 +74,11 @@ std::vector<ParamTarget> Au3ParamAutomationInteraction::availableParams(trackedi
             name += " " + std::to_string(occ + 1);
         }
         for (const auto& p : paramautomation::listParams(*state)) {
-            if (p.isBool || p.min == p.max) {
-                continue; // switches and unranged values are not useful lanes
+            if (p.min == p.max) {
+                continue; // unranged values are not useful lanes
+            }
+            if (p.isBool && p.stepCount == 0) {
+                continue; // built-in switches (plugin toggles carry stepCount 1 and are kept)
             }
             if (p.key.rfind("show", 0) == 0) {
                 continue; // view-only flags of the dynamics effects (showInput, showOutput, ...)
@@ -89,6 +92,9 @@ std::vector<ParamTarget> Au3ParamAutomationInteraction::availableParams(trackedi
             t.maxValue = p.max;
             t.defaultValue = p.value;
             t.isInteger = p.isInteger;
+            t.paramName = p.name.empty() ? p.key : p.name;
+            t.units = p.units;
+            t.normalized = p.normalized;
             result.push_back(std::move(t));
         }
     }
@@ -139,6 +145,7 @@ std::optional<ParamTarget> Au3ParamAutomationInteraction::activeTarget(trackedit
     t.effectId = lane->effectId;
     t.occurrence = lane->occurrence;
     t.paramKey = lane->paramKey;
+    t.paramName = lane->paramKey;
     t.effectName = muse::trc("automation", "(missing effect)");
     double lo = 0, hi = 1;
     for (auto& p : lane->points) {
@@ -258,4 +265,26 @@ void Au3ParamAutomationInteraction::reinstall()
 muse::async::Channel<au::trackedit::TrackId> Au3ParamAutomationInteraction::changed() const
 {
     return m_changed;
+}
+
+std::string Au3ParamAutomationInteraction::valueText(trackedit::TrackId trackId, double value) const
+{
+    const auto* lane = activeLane(trackId);
+    auto* prj = project();
+    Au3WaveTrack* track = prj ? DomAccessor::findWaveTrack(*prj, Au3TrackId(trackId)) : nullptr;
+    if (!lane || !track) {
+        return {};
+    }
+    auto& list = RealtimeEffectList::Get(*track);
+    for (size_t i = 0, n = list.GetStatesCount(); i < n; ++i) {
+        auto state = list.GetStateAt(i);
+        if (state && state->GetID().ToStdString() == lane->effectId
+            && paramautomation::occurrenceAt(list, i) == lane->occurrence) {
+            if (paramautomation::formatOf(*state) == ParamFormat::BuiltIn) {
+                return {}; // the model formats built-in values itself
+            }
+            return paramautomation::valueText(*state, lane->paramKey, value);
+        }
+    }
+    return {};
 }
