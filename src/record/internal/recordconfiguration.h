@@ -9,6 +9,16 @@
 #include "../irecordconfiguration.h"
 
 namespace au::record {
+//! Low-latency monitoring threshold: effects with more latency are bypassed while monitoring.
+//! 25 ms keeps Noise suppression (~21 ms) and still bypasses Breath removal (~230 ms).
+constexpr double DEFAULT_LOW_LATENCY_THRESHOLD_MS = 25.0;
+constexpr double OLD_DEFAULT_LOW_LATENCY_THRESHOLD_MS = 20.0;
+//! One-time migration of a stored threshold: the old default becomes the new one
+inline double migrateLowLatencyThresholdMs(double stored)
+{
+    return stored == OLD_DEFAULT_LOW_LATENCY_THRESHOLD_MS ? DEFAULT_LOW_LATENCY_THRESHOLD_MS : stored;
+}
+
 class RecordConfiguration : public IRecordConfiguration
 {
     muse::GlobalInject<muse::ui::IUiConfiguration> uiConfiguration;

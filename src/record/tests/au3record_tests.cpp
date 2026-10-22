@@ -38,6 +38,7 @@
 #include "audio/tests/mocks/audiodrivercontrollermock.h"
 #include "mocks/recordconfigurationmock.h"
 #include "internal/au3/au3monitorchain.h"
+#include "internal/recordconfiguration.h"
 #include "au3-realtime-effects/RealtimeEffectList.h"
 #include "au3-realtime-effects/RealtimeEffectState.h"
 #include "effects/builtin_collection/denoise/denoiseeffects.h"
@@ -2185,11 +2186,12 @@ TEST_F(Au3RecordTests, MonitorChainFromRealBuiltinEffects)
     EXPECT_EQ(low.used, (std::vector<std::string> { "Compressor", "Noise suppression" }));
     EXPECT_NEAR(low.effectLatencySeconds, all.effectLatencySeconds - breathLatency, 1e-9);
 
-    // at the 20 ms default, noise suppression (just over) is bypassed too
-    auto strict = monitor::buildMonitorChain(projectRef(), track, TEST_SAMPLE_RATE, true, 0.020);
-    if (noiseLatency > 0.020) {
-        EXPECT_EQ(strict.bypassed, (std::vector<std::string> { "Breath removal", "Noise suppression" }));
-    }
+    // the default threshold (25 ms) keeps noise suppression (~21 ms) and bypasses breath removal
+    auto byDefault = monitor::buildMonitorChain(projectRef(), track, TEST_SAMPLE_RATE, true,
+                                                DEFAULT_LOW_LATENCY_THRESHOLD_MS / 1000.0);
+    EXPECT_EQ(byDefault.bypassed, (std::vector<std::string> { "Breath removal" }));
+    EXPECT_EQ(byDefault.used, (std::vector<std::string> { "Compressor", "Noise suppression" }));
+    EXPECT_GT(noiseLatency, OLD_DEFAULT_LOW_LATENCY_THRESHOLD_MS / 1000.0); // why the old 20 ms default dropped it
 
     // the chain processes audio blocks of any size without touching the source effects
     monitor::MonitorProcessor p;
@@ -2283,5 +2285,16 @@ TEST_F(Au3RecordTests, PollMonitoringRebuildsOnStackChange)
     addEffect(RealtimeEffectList::Get(projectRef()), kNoiseId);
     m_record->pollMonitoring();
     EXPECT_EQ(m_record->monitoringStatus().effects, (std::vector<std::string> { "Compressor", "Noise suppression" }));
+}
+}
+
+namespace au::record {
+TEST(RecordConfigurationTests, LowLatencyThresholdDefaultAndMigration)
+{
+    EXPECT_DOUBLE_EQ(DEFAULT_LOW_LATENCY_THRESHOLD_MS, 25.0);
+    EXPECT_DOUBLE_EQ(migrateLowLatencyThresholdMs(20.0), 25.0); // stored old default
+    EXPECT_DOUBLE_EQ(migrateLowLatencyThresholdMs(25.0), 25.0);
+    EXPECT_DOUBLE_EQ(migrateLowLatencyThresholdMs(15.0), 15.0); // user choices are kept
+    EXPECT_DOUBLE_EQ(migrateLowLatencyThresholdMs(40.0), 40.0);
 }
 }

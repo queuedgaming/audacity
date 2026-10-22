@@ -19,24 +19,7 @@ BaseSection {
         width: parent.width
         spacing: 12
 
-        CheckBox {
-            id: inputMonitoringCheckBox
-
-            width: parent.width
-
-            text: qsTrc("preferences", "Turn on input monitoring (hear yourself while recording)")
-
-            checked: recordingPreferencesModel.isInputMonitoringOn
-
-            navigation.name: "InputMonitoringCheckBox"
-            navigation.panel: root.navigation
-            navigation.order: 1
-
-            onClicked: {
-                recordingPreferencesModel.isInputMonitoringOn = !checked
-            }
-        }
-
+        // input monitoring itself lives in the "Live monitoring" section (Monitor input)
         CheckBox {
             id: micMeteringCheckBox
 
@@ -48,7 +31,7 @@ BaseSection {
 
             navigation.name: "MicMeteringCheckBox"
             navigation.panel: root.navigation
-            navigation.order: 2
+            navigation.order: 1
 
             onClicked: {
                 recordingPreferencesModel.isMicMeteringOn = !checked

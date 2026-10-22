@@ -22,6 +22,7 @@ const muse::Settings::Key METRONOME_KEY("record", "record/metronome");
 const muse::Settings::Key MONITOR_FX_KEY("record", "record/monitorThroughEffects");
 const muse::Settings::Key MONITOR_LOWLAT_KEY("record", "record/lowLatencyMonitoring");
 const muse::Settings::Key MONITOR_LOWLAT_MS_KEY("record", "record/lowLatencyThresholdMs");
+const muse::Settings::Key MONITOR_LOWLAT_MS_MIGRATED_KEY("record", "record/lowLatencyThresholdMsMigrated25");
 const muse::Settings::Key MONITOR_GAIN_KEY("record", "record/monitorGainDb");
 const muse::Settings::Key MONITOR_MUTE_KEY("record", "record/monitorMuted");
 const muse::Settings::Key PUNCH_OUT_AT_SELECTION_END_KEY("record", "record/punchOutAtSelectionEnd");
@@ -95,7 +96,16 @@ void RecordConfiguration::init()
     muse::settings()->valueChanged(MONITOR_LOWLAT_KEY).onReceive(nullptr, [this](const muse::Val&) {
         m_lowLatencyMonitoringChanged.notify();
     });
-    muse::settings()->setDefaultValue(MONITOR_LOWLAT_MS_KEY, muse::Val(20.0));
+    muse::settings()->setDefaultValue(MONITOR_LOWLAT_MS_KEY, muse::Val(DEFAULT_LOW_LATENCY_THRESHOLD_MS));
+    muse::settings()->setDefaultValue(MONITOR_LOWLAT_MS_MIGRATED_KEY, muse::Val(false));
+    if (!muse::settings()->value(MONITOR_LOWLAT_MS_MIGRATED_KEY).toBool()) {
+        // a stored 20 ms is the old default (pre-25 ms builds), not a user choice to keep
+        const double stored = muse::settings()->value(MONITOR_LOWLAT_MS_KEY).toDouble();
+        if (migrateLowLatencyThresholdMs(stored) != stored) {
+            muse::settings()->setSharedValue(MONITOR_LOWLAT_MS_KEY, muse::Val(migrateLowLatencyThresholdMs(stored)));
+        }
+        muse::settings()->setSharedValue(MONITOR_LOWLAT_MS_MIGRATED_KEY, muse::Val(true));
+    }
     muse::settings()->valueChanged(MONITOR_LOWLAT_MS_KEY).onReceive(nullptr, [this](const muse::Val&) {
         m_lowLatencyThresholdMsChanged.notify();
     });

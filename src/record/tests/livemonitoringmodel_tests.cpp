@@ -66,13 +66,13 @@ TEST_F(LiveMonitoringModelTests, ReadsConfiguration)
 {
     ON_CALL(*m_config, isInputMonitoringOn()).WillByDefault(Return(true));
     ON_CALL(*m_config, lowLatencyMonitoring()).WillByDefault(Return(true));
-    ON_CALL(*m_config, lowLatencyThresholdMs()).WillByDefault(Return(20.0));
+    ON_CALL(*m_config, lowLatencyThresholdMs()).WillByDefault(Return(25.0));
     ON_CALL(*m_config, monitorGainDb()).WillByDefault(Return(-3.0));
     ON_CALL(*m_config, monitorMuted()).WillByDefault(Return(true));
     EXPECT_TRUE(m_model->monitorInput());
     EXPECT_TRUE(m_model->throughEffects());
     EXPECT_TRUE(m_model->lowLatency());
-    EXPECT_DOUBLE_EQ(m_model->thresholdMs(), 20.0);
+    EXPECT_DOUBLE_EQ(m_model->thresholdMs(), 25.0);
     EXPECT_DOUBLE_EQ(m_model->gainDb(), -3.0);
     EXPECT_TRUE(m_model->muted());
 }
