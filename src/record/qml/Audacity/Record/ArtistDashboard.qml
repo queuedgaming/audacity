@@ -10,7 +10,7 @@ import Muse.UiComponents
 import Audacity.Record
 
 //! Artist Recording Mode: a focused, large-type recording dashboard drawn over the project
-//! window. Hiding it (Escape, the Exit button, View > Artist recording mode, Ctrl+Alt+R)
+//! window. Hiding it (Escape, the Exit button, View > Artist recording mode, Ctrl+Shift+R)
 //! leaves the normal layout untouched underneath.
 FocusScope {
     id: root
