@@ -5,6 +5,7 @@ import QtQuick 2.15
 import QtQuick.Layouts 1.15
 
 import Muse.UiComponents
+import Audacity.Record
 import Muse.Ui 1.0
 
 import Audacity.Record 1.0
@@ -33,7 +34,7 @@ StyledPopupView {
         id: prv
 
         readonly property int contentWidth: 480 - 2 * margins
-        readonly property int contentHeight: 210 - 2 * margins
+        readonly property int contentHeight: 400 - 2 * margins
 
         readonly property int margins: 12
         readonly property int spacing: 8
@@ -207,6 +208,7 @@ StyledPopupView {
 
             CheckBox {
                 id: enableMonitoringCheckbox
+                visible: false // superseded by MonitoringOptions below (same setting)
 
                 height: prv.checkboxHeight
 
@@ -237,6 +239,12 @@ StyledPopupView {
                 onClicked: {
                     isMicMeteringOnChangeRequested(!checked)
                 }
+            }
+
+            MonitoringOptions {
+                width: parent.width
+                navigationPanel: navPanel
+                navigationOrderStart: 10
             }
         }
     }

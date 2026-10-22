@@ -3159,6 +3159,12 @@ void AudioIoCallback::DoPlaythrough(
         DoSoftwarePlaythrough(inputBuffer, mCaptureFormat,
                               numCaptureChannels,
                               outputBuffer, framesPerBuffer);
+        // monitoring effects/gain act on the output copy only: the capture buffer stays dry
+        if (numPlaybackChannels == 2) {
+            if (auto* processor = mPlaythroughProcessor.load(std::memory_order_acquire)) {
+                processor->ProcessPlaythrough(outputBuffer, framesPerBuffer);
+            }
+        }
     }
 
     // Copy the results to outputMeterFloats if necessary

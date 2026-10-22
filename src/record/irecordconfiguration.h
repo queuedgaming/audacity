@@ -78,6 +78,31 @@ public:
     virtual void setMetronomeEnabled(bool enabled) = 0;
     virtual muse::async::Notification metronomeEnabledChanged() const = 0;
 
+    //! Live monitoring: hear the input through the record track's realtime effects and the master effects (recording stays dry)
+    virtual bool monitorThroughEffects() const = 0;
+    virtual void setMonitorThroughEffects(bool value) = 0;
+    virtual muse::async::Notification monitorThroughEffectsChanged() const = 0;
+
+    //! Live monitoring: skip effects whose latency is above lowLatencyThresholdMs
+    virtual bool lowLatencyMonitoring() const = 0;
+    virtual void setLowLatencyMonitoring(bool value) = 0;
+    virtual muse::async::Notification lowLatencyMonitoringChanged() const = 0;
+
+    //! Low-latency monitoring threshold, milliseconds
+    virtual double lowLatencyThresholdMs() const = 0;
+    virtual void setLowLatencyThresholdMs(double value) = 0;
+    virtual muse::async::Notification lowLatencyThresholdMsChanged() const = 0;
+
+    //! Live monitoring level, dB (-60..+12)
+    virtual double monitorGainDb() const = 0;
+    virtual void setMonitorGainDb(double value) = 0;
+    virtual muse::async::Notification monitorGainDbChanged() const = 0;
+
+    //! Live monitoring mute
+    virtual bool monitorMuted() const = 0;
+    virtual void setMonitorMuted(bool value) = 0;
+    virtual muse::async::Notification monitorMutedChanged() const = 0;
+
     virtual RecordingTrackNameOptions recordingTrackNameOptions() const = 0;
 };
 }

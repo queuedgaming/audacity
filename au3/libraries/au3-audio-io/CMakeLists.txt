@@ -12,6 +12,7 @@ set( TARGET au3-audio-io )
 set( SOURCES
    AudioIO.cpp
    AudioIO.h
+   PlaythroughProcessor.h
    AudioIOExt.cpp
    AudioIOExt.h
    AudioIOListener.cpp

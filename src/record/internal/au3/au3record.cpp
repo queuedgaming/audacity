@@ -6,6 +6,8 @@
 #include "au3wrap/internal/takelanes.h"
 #include "au3wrap/internal/projectkey.h"
 #include "au3wrap/internal/transients.h"
+#include "au3monitorchain.h"
+#include "au3-audio-io/AudioIO.h"
 #include "au3-numeric-formats/ProjectTimeSignature.h"
 #include "au3-label-track/LabelTrack.h"
 
@@ -205,6 +207,23 @@ TransportSequences MakeTransportTracks(Au3TrackList& trackList, bool selectedOnl
 void Au3Record::init()
 {
     m_audioInput = std::make_shared<Au3AudioInput>(iocContext());
+
+    // live monitoring: one processor for the app's lifetime, installed on the playthrough path
+    m_monitor = std::make_unique<monitor::MonitorProcessor>();
+    if (auto* audioIO = AudioIO::Get()) {
+        audioIO->SetPlaythroughProcessor(m_monitor.get());
+    }
+    applyMonitorLevel();
+    recordConfiguration()->monitorGainDbChanged().onNotify(this, [this]() { applyMonitorLevel(); });
+    recordConfiguration()->monitorMutedChanged().onNotify(this, [this]() { applyMonitorLevel(); });
+    for (auto n : { recordConfiguration()->monitorThroughEffectsChanged(), recordConfiguration()->lowLatencyMonitoringChanged(),
+                    recordConfiguration()->lowLatencyThresholdMsChanged(), recordConfiguration()->isInputMonitoringOnChanged() }) {
+        n.onNotify(this, [this]() {
+            if (globalContext()->currentProject()) {
+                refreshMonitoring();
+            }
+        });
+    }
 
     audioEngine()->recordingUpdateRequested().onNotify(this, [this]() {
         if (m_recordData.empty()) {
@@ -975,6 +994,7 @@ Ret Au3Record::doRecord(Au3Project& project,
     options.leadInTime = leadInTime;
     options.crossfadeData = crossfadeData;
 
+    refreshMonitoring();
     int token = audioEngine()->startStream(transportSequences, t0, t1, t1, project, options);
 
     success = (token > 0);
@@ -1429,6 +1449,64 @@ muse::Ret Au3Record::sliceToGrid(const trackedit::ClipKey& key, int division)
                                        /*: Undo history entry name; shown after Undo and Redo in the Edit menu */
                                        trc("record", "Slice to grid"));
     return make_ok();
+}
+
+void Au3Record::applyMonitorLevel()
+{
+    if (!m_monitor) {
+        return;
+    }
+    m_monitor->setGainDb(recordConfiguration()->monitorGainDb());
+    m_monitor->setMuted(recordConfiguration()->monitorMuted());
+}
+
+void Au3Record::refreshMonitoring()
+{
+    if (!m_monitor) {
+        return;
+    }
+    Au3Project& project = projectRef();
+    // the record target, as Artist mode shows it: the first selected wave track
+    Au3WaveTrack* target = nullptr;
+    for (const auto& id : selectionController()->selectedTracks()) {
+        if ((target = DomAccessor::findWaveTrack(project, ::TrackId(id)))) {
+            break;
+        }
+    }
+    MonitoringStatus status;
+    status.enabled = recordConfiguration()->isInputMonitoringOn();
+    status.targetTrack = target ? au::au3::wxToStdString(target->GetName()) : std::string();
+    const bool throughEffects = recordConfiguration()->monitorThroughEffects();
+    if (throughEffects) {
+        auto built = monitor::buildMonitorChain(project, target, ProjectRate::Get(project).GetRate(),
+                                                recordConfiguration()->lowLatencyMonitoring(),
+                                                recordConfiguration()->lowLatencyThresholdMs() / 1000.0);
+        status.effects = built.used;
+        status.bypassed = built.bypassed;
+        status.effectLatencyMs = built.effectLatencySeconds * 1000.0;
+        m_monitor->setChain(std::move(built.chain));
+    } else {
+        m_monitor->setChain(nullptr);
+    }
+    m_monitor->setEffectsEnabled(throughEffects);
+    applyMonitorLevel();
+
+    const auto* audioIO = AudioIO::Get();
+    status.deviceLatencyMs = 1000.0 * monitor::deviceLatencySeconds(audioDriverController()->configuration().bufferLength,
+                                                                    audioIO && audioIO->IsStreamActive() ? audioIO->GetHardwareCaptureLatencyMs() : 0,
+                                                                    audioIO && audioIO->IsStreamActive() ? audioIO->GetHardwarePlaybackLatencyMs() : 0);
+    m_monitoringStatus = status;
+    m_monitoringStatusChanged.notify();
+}
+
+MonitoringStatus Au3Record::monitoringStatus() const
+{
+    return m_monitoringStatus;
+}
+
+muse::async::Notification Au3Record::monitoringStatusChanged() const
+{
+    return m_monitoringStatusChanged;
 }
 
 int Au3Record::takeCount(const trackedit::TrackId& trackId) const

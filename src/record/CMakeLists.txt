@@ -35,12 +35,19 @@ target_sources(record PRIVATE
     internal/au3/au3audioinput.h
     internal/au3/au3record.cpp
     internal/au3/au3record.h
+    internal/au3/au3monitorchain.cpp
+    internal/au3/au3monitorchain.h
+    internal/monitor/monitorprocessor.cpp
+    internal/monitor/monitorprocessor.h
 )
 
 target_link_libraries(record PRIVATE
         au3wrap
         au3-audio-devices
         au3-label-track
+        au3-realtime-effects
+        au3-module-manager
+        au3-components
         au3-numeric-formats
         au3-audio-io
         au3-project-rate

@@ -91,6 +91,19 @@ PreferencesPage {
 
         SeparatorLine {}
 
+        LiveMonitoringSection {
+            navigation.section: root.navigationSection
+            navigation.order: root.navigationOrderStart + 5
+
+            onFocusChanged: {
+                if (activeFocus) {
+                    root.ensureContentVisibleRequested(Qt.rect(x, y, width, height))
+                }
+            }
+        }
+
+        SeparatorLine {}
+
         LeadInRecordingSection {
             recordingPreferencesModel: recordingPreferencesModel
 

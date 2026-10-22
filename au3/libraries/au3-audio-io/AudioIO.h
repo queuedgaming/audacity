@@ -17,6 +17,9 @@
 #include "au3-mixer/AudioIOSequences.h"
 #include "PlaybackSchedule.h" // member variable
 #include "RingBuffer.h"
+#include "PlaythroughProcessor.h"
+
+#include <atomic>
 #include "au3-utility/LockFreeQueue.h"
 
 #include <functional>
@@ -288,6 +291,13 @@ public:
     double mMinCaptureSecsToCopy;
     /*! Read by a worker thread but unchanging during playback */
     bool mSoftwarePlaythrough;
+    //! Processing of the playthrough signal (set from the main thread; read in the callback)
+    std::atomic<PlaythroughProcessor*> mPlaythroughProcessor{ nullptr };
+public:
+    //! The processor must outlive any stream; pass nullptr to remove it
+    void SetPlaythroughProcessor(PlaythroughProcessor* processor) { mPlaythroughProcessor.store(processor); }
+    PlaythroughProcessor* GetPlaythroughProcessor() const { return mPlaythroughProcessor.load(); }
+
     /// True if Sound Activated Recording is enabled
     /*! Read by a worker thread but unchanging during playback */
     bool mPauseRec;

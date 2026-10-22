@@ -34,6 +34,9 @@ public:
     MOCK_METHOD(std::string, projectKeyLabel, (const std::optional<ProjectKeyInfo>&), (const, override));
     MOCK_METHOD(std::string, lastAutoCompKey, (), (const, override));
     MOCK_METHOD(muse::Ret, setClipFades, (const trackedit::ClipKey&, double, double, int), (override));
+    MOCK_METHOD(void, refreshMonitoring, (), (override));
+    MOCK_METHOD(MonitoringStatus, monitoringStatus, (), (const, override));
+    MOCK_METHOD(muse::async::Notification, monitoringStatusChanged, (), (const, override));
     MOCK_METHOD(int, takeCount, (const trackedit::TrackId&), (const, override));
     MOCK_METHOD(std::optional<TakeStats>, clipStats, (const trackedit::ClipKey&), (const, override));
     MOCK_METHOD(muse::Ret, detectTransients, (const trackedit::ClipKey&, double, bool), (override));

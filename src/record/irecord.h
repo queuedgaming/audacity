@@ -60,6 +60,12 @@ public:
     //! Non-destructive clip fades (seconds; curve 0 linear, 1 equal power), one undo step
     virtual muse::Ret setClipFades(const trackedit::ClipKey& clip, double fadeIn, double fadeOut, int curve) = 0;
 
+    //! Live monitoring: rebuild the effect chain the monitored input goes through (record target
+    //! = first selected track, plus master) and apply level/mute; status describes what is heard
+    virtual void refreshMonitoring() = 0;
+    virtual MonitoringStatus monitoringStatus() const = 0;
+    virtual muse::async::Notification monitoringStatusChanged() const = 0;
+
     //! Number of take lanes of the take group `track` belongs to (main or take track); 0 without takes
     virtual int takeCount(const trackedit::TrackId& track) const = 0;
     //! Duration, sample peak and clipping of a clip (e.g. the last recorded take)

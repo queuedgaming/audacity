@@ -25,6 +25,17 @@ struct TakeStats {
     size_t clippedSamples = 0;
 };
 
+//! Live monitoring state (software playthrough through realtime effects)
+struct MonitoringStatus {
+    bool enabled = false;             //!< "Monitor input" is on
+    std::string targetTrack;          //!< whose effects are heard (empty: master only)
+    std::vector<std::string> effects; //!< heard, in order
+    std::vector<std::string> bypassed; //!< skipped by low-latency monitoring
+    double deviceLatencyMs = 0.0;     //!< input + output buffering
+    double effectLatencyMs = 0.0;     //!< sum of the heard effects' latency
+    double totalLatencyMs() const { return deviceLatencyMs + effectLatencyMs; }
+};
+
 //! Project-level musical key (see au3wrap/internal/projectkey.h)
 struct ProjectKeyInfo {
     int tonic = 0;            //!< pitch class, 0 = C

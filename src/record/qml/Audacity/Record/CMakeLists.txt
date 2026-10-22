@@ -14,12 +14,15 @@ qt_add_qml_module(record_qml
         playbacktoolbarprojectkeyitem.h
         artistmodemodel.cpp
         artistmodemodel.h
+        livemonitoringmodel.cpp
+        livemonitoringmodel.h
     QML_FILES
         RecordLevel.qml
         internal/RecordLevelPopup.qml
         ProjectKey.qml
         internal/ProjectKeyPopup.qml
         ArtistDashboard.qml
+        MonitoringOptions.qml
     IMPORTS
         TARGET muse_ui_qml
         TARGET muse_uicomponents_qml

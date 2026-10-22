@@ -337,6 +337,16 @@ FocusScope {
                     navigation.order: 3
                     onClicked: model.keepTakes = !checked
                 }
+                StyledTextLabel {
+                    Layout.topMargin: 12
+                    text: qsTrc("record", "Monitoring")
+                    font: ui.theme.bodyBoldFont
+                }
+                MonitoringOptions {
+                    Layout.fillWidth: true
+                    navigationPanel: optionsPanel
+                    navigationOrderStart: 10
+                }
                 Item { Layout.fillHeight: true }
             }
         }

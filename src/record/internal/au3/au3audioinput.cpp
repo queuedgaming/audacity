@@ -4,6 +4,8 @@
 
 #include "au3audioinput.h"
 
+#include "record/irecord.h"
+
 #include "global/async/async.h"
 
 #include "au3-audio-io/ProjectAudioIO.h"
@@ -128,6 +130,8 @@ void Au3AudioInput::startAudioEngineMonitoring() const
         if (!project) {
             return;
         }
+        // idle monitoring ("monitor while not recording") goes through the same effect chain
+        record()->refreshMonitoring();
         audioEngine()->startMonitoring(*project);
     });
 }

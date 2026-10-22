@@ -19,6 +19,11 @@ const muse::Settings::Key AUTOCOMP_PITCH_KEY("record", "record/autoCompPitchScor
 const muse::Settings::Key ARTIST_MODE_KEY("record", "record/artistMode");
 const muse::Settings::Key COUNT_IN_KEY("record", "record/artistCountIn");
 const muse::Settings::Key METRONOME_KEY("record", "record/metronome");
+const muse::Settings::Key MONITOR_FX_KEY("record", "record/monitorThroughEffects");
+const muse::Settings::Key MONITOR_LOWLAT_KEY("record", "record/lowLatencyMonitoring");
+const muse::Settings::Key MONITOR_LOWLAT_MS_KEY("record", "record/lowLatencyThresholdMs");
+const muse::Settings::Key MONITOR_GAIN_KEY("record", "record/monitorGainDb");
+const muse::Settings::Key MONITOR_MUTE_KEY("record", "record/monitorMuted");
 const muse::Settings::Key PUNCH_OUT_AT_SELECTION_END_KEY("record", "record/punchOutAtSelectionEnd");
 
 //! NOTE: these keys deliberately match the au3 preference paths (bridged to the
@@ -81,6 +86,26 @@ void RecordConfiguration::init()
     muse::settings()->setDefaultValue(METRONOME_KEY, muse::Val(false));
     muse::settings()->valueChanged(METRONOME_KEY).onReceive(nullptr, [this](const muse::Val&) {
         m_metronomeEnabledChanged.notify();
+    });
+    muse::settings()->setDefaultValue(MONITOR_FX_KEY, muse::Val(true));
+    muse::settings()->valueChanged(MONITOR_FX_KEY).onReceive(nullptr, [this](const muse::Val&) {
+        m_monitorThroughEffectsChanged.notify();
+    });
+    muse::settings()->setDefaultValue(MONITOR_LOWLAT_KEY, muse::Val(false));
+    muse::settings()->valueChanged(MONITOR_LOWLAT_KEY).onReceive(nullptr, [this](const muse::Val&) {
+        m_lowLatencyMonitoringChanged.notify();
+    });
+    muse::settings()->setDefaultValue(MONITOR_LOWLAT_MS_KEY, muse::Val(20.0));
+    muse::settings()->valueChanged(MONITOR_LOWLAT_MS_KEY).onReceive(nullptr, [this](const muse::Val&) {
+        m_lowLatencyThresholdMsChanged.notify();
+    });
+    muse::settings()->setDefaultValue(MONITOR_GAIN_KEY, muse::Val(0.0));
+    muse::settings()->valueChanged(MONITOR_GAIN_KEY).onReceive(nullptr, [this](const muse::Val&) {
+        m_monitorGainDbChanged.notify();
+    });
+    muse::settings()->setDefaultValue(MONITOR_MUTE_KEY, muse::Val(false));
+    muse::settings()->valueChanged(MONITOR_MUTE_KEY).onReceive(nullptr, [this](const muse::Val&) {
+        m_monitorMutedChanged.notify();
     });
 }
 
@@ -258,4 +283,79 @@ void RecordConfiguration::setMetronomeEnabled(bool enabled)
 muse::async::Notification RecordConfiguration::metronomeEnabledChanged() const
 {
     return m_metronomeEnabledChanged;
+}
+
+bool RecordConfiguration::monitorThroughEffects() const
+{
+    return muse::settings()->value(MONITOR_FX_KEY).toBool();
+}
+
+void RecordConfiguration::setMonitorThroughEffects(bool value)
+{
+    muse::settings()->setSharedValue(MONITOR_FX_KEY, muse::Val(value));
+}
+
+muse::async::Notification RecordConfiguration::monitorThroughEffectsChanged() const
+{
+    return m_monitorThroughEffectsChanged;
+}
+
+bool RecordConfiguration::lowLatencyMonitoring() const
+{
+    return muse::settings()->value(MONITOR_LOWLAT_KEY).toBool();
+}
+
+void RecordConfiguration::setLowLatencyMonitoring(bool value)
+{
+    muse::settings()->setSharedValue(MONITOR_LOWLAT_KEY, muse::Val(value));
+}
+
+muse::async::Notification RecordConfiguration::lowLatencyMonitoringChanged() const
+{
+    return m_lowLatencyMonitoringChanged;
+}
+
+double RecordConfiguration::lowLatencyThresholdMs() const
+{
+    return muse::settings()->value(MONITOR_LOWLAT_MS_KEY).toDouble();
+}
+
+void RecordConfiguration::setLowLatencyThresholdMs(double value)
+{
+    muse::settings()->setSharedValue(MONITOR_LOWLAT_MS_KEY, muse::Val(value));
+}
+
+muse::async::Notification RecordConfiguration::lowLatencyThresholdMsChanged() const
+{
+    return m_lowLatencyThresholdMsChanged;
+}
+
+double RecordConfiguration::monitorGainDb() const
+{
+    return muse::settings()->value(MONITOR_GAIN_KEY).toDouble();
+}
+
+void RecordConfiguration::setMonitorGainDb(double value)
+{
+    muse::settings()->setSharedValue(MONITOR_GAIN_KEY, muse::Val(value));
+}
+
+muse::async::Notification RecordConfiguration::monitorGainDbChanged() const
+{
+    return m_monitorGainDbChanged;
+}
+
+bool RecordConfiguration::monitorMuted() const
+{
+    return muse::settings()->value(MONITOR_MUTE_KEY).toBool();
+}
+
+void RecordConfiguration::setMonitorMuted(bool value)
+{
+    muse::settings()->setSharedValue(MONITOR_MUTE_KEY, muse::Val(value));
+}
+
+muse::async::Notification RecordConfiguration::monitorMutedChanged() const
+{
+    return m_monitorMutedChanged;
 }

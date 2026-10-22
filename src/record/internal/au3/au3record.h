@@ -25,6 +25,7 @@ class WaveClip;
 #include "au3wrap/au3types.h"
 
 #include "../../irecord.h"
+#include "../monitor/monitorprocessor.h"
 #include "../../irecordconfiguration.h"
 
 struct TransportSequences;
@@ -66,6 +67,9 @@ public:
     std::string projectKeyLabel(const std::optional<ProjectKeyInfo>& key) const override;
     std::string lastAutoCompKey() const override { return m_lastAutoCompKey; }
     muse::Ret setClipFades(const trackedit::ClipKey& clip, double fadeIn, double fadeOut, int curve) override;
+    void refreshMonitoring() override;
+    MonitoringStatus monitoringStatus() const override;
+    muse::async::Notification monitoringStatusChanged() const override;
     int takeCount(const trackedit::TrackId& track) const override;
     std::optional<TakeStats> clipStats(const trackedit::ClipKey& clip) const override;
     muse::Ret detectTransients(const trackedit::ClipKey& clip, double sensitivity, bool toLabelTrack) override;
@@ -85,6 +89,10 @@ public:
     muse::async::Notification recordingFinished() const override;
 
 private:
+    std::unique_ptr<monitor::MonitorProcessor> m_monitor;
+    MonitoringStatus m_monitoringStatus;
+    muse::async::Notification m_monitoringStatusChanged;
+    void applyMonitorLevel();
     //! split at project times, crossfade, optionally quantize; returns number of pieces made
     size_t sliceClipAt(::WaveTrack* track, std::shared_ptr<::WaveClip> clip, std::vector<double> cuts, double strength, double step);
     std::vector<double> detectOnsetTimes(::WaveTrack* track, const ::WaveClip& clip, double sensitivity) const;

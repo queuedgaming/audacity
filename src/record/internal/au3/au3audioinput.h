@@ -15,6 +15,10 @@
 #include "playback/iplaybackcontroller.h"
 #include "record/iaudioinput.h"
 #include "record/irecordconfiguration.h"
+
+namespace au::record {
+class IRecord;
+}
 #include "record/irecordcontroller.h"
 #include "record/irecordmetercontroller.h"
 #include "trackedit/iselectioncontroller.h"
@@ -31,6 +35,7 @@ class Au3AudioInput : public IAudioInput, public muse::async::Asyncable, public 
     muse::ContextInject<au::context::IGlobalContext> globalContext{ this };
     muse::ContextInject<playback::IPlaybackController> playbackController{ this };
     muse::ContextInject<record::IRecordController> controller{ this };
+    muse::ContextInject<record::IRecord> record{ this };
     muse::ContextInject<trackedit::ISelectionController> selectionController{ this };
     muse::ContextInject<trackedit::ITrackNavigationController> trackNavigationController{ this };
 
