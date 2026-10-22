@@ -41,7 +41,19 @@ muse::uicomponents::MenuItemList RealtimeEffectMenuModelBase::effectMenus()
 
 std::optional<au::trackedit::TrackId> RealtimeEffectMenuModelBase::trackId() const
 {
+    if (m_targetTrackId != NO_TARGET_TRACK) {
+        return static_cast<au::trackedit::TrackId>(m_targetTrackId);
+    }
     return m_isMasterTrack ? au::effects::IRealtimeEffectService::masterTrackId : trackSelection()->selectedTrackId();
+}
+
+void RealtimeEffectMenuModelBase::setTargetTrackId(qlonglong id)
+{
+    if (m_targetTrackId == id) {
+        return;
+    }
+    m_targetTrackId = id;
+    emit targetTrackIdChanged();
 }
 
 void RealtimeEffectMenuModelBase::prop_setIsMasterTrack(bool isMasterTrack)

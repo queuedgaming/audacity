@@ -61,18 +61,40 @@ void MixerPanelModel::init()
     if (auto fx = realtimeEffectService()) {
         fx->realtimeEffectStackChanged().onReceive(this, [this](effects::TrackId) { scheduleReload(); });
         fx->isActiveChanged().onReceive(this, [this](const effects::RealtimeEffectStatePtr&) { scheduleReload(); });
+        fx->realtimeEffectAdded().onReceive(this, [this](effects::TrackId, effects::RealtimeEffectStatePtr) { scheduleReload(); });
+        fx->realtimeEffectRemoved().onReceive(this, [this](effects::TrackId, effects::RealtimeEffectStatePtr) { scheduleReload(); });
+        fx->realtimeEffectMoved().onReceive(this, [this](effects::TrackId, effects::EffectChainLinkIndex, effects::EffectChainLinkIndex) {
+            scheduleReload();
+        });
+        fx->realtimeEffectReplaced().onReceive(this, [this](effects::TrackId, effects::EffectChainLinkIndex,
+                                                            effects::RealtimeEffectStatePtr) { scheduleReload(); });
     }
-    if (auto prj = globalContext() ? globalContext()->currentTrackeditProject() : nullptr) {
-        prj->trackAdded().onReceive(this, [this](const trackedit::Track&) { scheduleReload(); });
-        prj->trackRemoved().onReceive(this, [this](const trackedit::Track&) { scheduleReload(); });
-        prj->trackChanged().onReceive(this, [this](const trackedit::Track&) { scheduleReload(); });
-        prj->trackMoved().onReceive(this, [this](const trackedit::Track&, int) { scheduleReload(); });
+    subscribeProject();
+    if (globalContext()) {
+        // the panel outlives projects: follow the current one
+        globalContext()->currentProjectChanged().onNotify(this, [this]() {
+            subscribeProject();
+            scheduleReload();
+        });
     }
     if (playback() && playback()->audioOutput()) {
         playback()->audioOutput()->playbackVolumeChanged().onReceive(this, [this](float) { scheduleReload(); });
     }
     reload();
     m_meterTimer.start();
+}
+
+void MixerPanelModel::subscribeProject()
+{
+    auto prj = globalContext() ? globalContext()->currentTrackeditProject() : nullptr;
+    if (!prj) {
+        return;
+    }
+    using Mode = muse::async::Asyncable::Mode;
+    prj->trackAdded().onReceive(this, [this](const trackedit::Track&) { scheduleReload(); }, Mode::SetReplace);
+    prj->trackRemoved().onReceive(this, [this](const trackedit::Track&) { scheduleReload(); }, Mode::SetReplace);
+    prj->trackChanged().onReceive(this, [this](const trackedit::Track&) { scheduleReload(); }, Mode::SetReplace);
+    prj->trackMoved().onReceive(this, [this](const trackedit::Track&, int) { scheduleReload(); }, Mode::SetReplace);
 }
 
 void MixerPanelModel::scheduleReload()
@@ -87,24 +109,32 @@ void MixerPanelModel::scheduleReload()
     }, Qt::QueuedConnection);
 }
 
+std::vector<mx::Strip> MixerPanelModel::currentStrips() const
+{
+    if (m_stripsProvider) {
+        return m_stripsProvider();
+    }
+    auto prj = globalContext() ? globalContext()->currentProject() : nullptr;
+    auto* au3prj = prj ? reinterpret_cast<au3::Au3Project*>(prj->au3ProjectPtr()) : nullptr;
+    return au3prj ? mx::strips(*au3prj) : std::vector<mx::Strip> {};
+}
+
 void MixerPanelModel::reload()
 {
     m_strips.clear();
     m_ids.clear();
-    auto prj = globalContext() ? globalContext()->currentProject() : nullptr;
-    auto* au3prj = prj ? reinterpret_cast<au3::Au3Project*>(prj->au3ProjectPtr()) : nullptr;
-    if (!au3prj) {
-        emit stripsChanged();
-        return;
-    }
 
-    const auto all = mx::strips(*au3prj);
+    const auto all = currentStrips();
     std::map<std::string, std::string> busNames;
     for (const auto& s : all) {
         if (s.kind == mx::StripKind::Bus) {
             busNames[s.busId] = s.name;
         }
     }
+    auto nameOfBus = [&](const std::string& busId) {
+        const auto it = busNames.find(busId);
+        return QString::fromStdString(busId.empty() || it == busNames.end() ? std::string("Master") : it->second);
+    };
 
     for (const auto& s : all) {
         QVariantMap m;
@@ -119,7 +149,7 @@ void MixerPanelModel::reload()
         m["solo"] = s.solo;
         m["channels"] = s.channels;
         m["output"] = QString::fromStdString(s.outputBusId);
-        m["outputName"] = QString::fromStdString(mx::outputName(*au3prj, s));
+        m["outputName"] = s.kind == mx::StripKind::Master ? QString("Master") : nameOfBus(s.outputBusId);
 
         if (s.kind != mx::StripKind::Master) {
             // output choices: master + every bus that can take this strip without a loop
@@ -142,7 +172,7 @@ void MixerPanelModel::reload()
             QVariantList sends;
             for (const auto& snd : s.sends) {
                 sends << QVariantMap { { "busId", QString::fromStdString(snd.busId) },
-                    { "name", QString::fromStdString(busNames.count(snd.busId) ? busNames[snd.busId] : snd.busId) },
+                    { "name", nameOfBus(snd.busId) },
                     { "level", double(snd.level) } };
             }
             m["sends"] = sends;
@@ -275,13 +305,49 @@ bool MixerPanelModel::removeSend(qlonglong trackId, const QString& busId)
     return routing() && routing()->removeSend(trackId, busId.toStdString());
 }
 
-void MixerPanelModel::setInsertActive(qlonglong trackId, int index, bool active)
+au::effects::RealtimeEffectStatePtr MixerPanelModel::insertAt(qlonglong trackId, int index) const
 {
     auto fx = realtimeEffectService();
     const auto stack = fx ? fx->effectStack(trackId) : std::nullopt;
-    if (stack && index >= 0 && size_t(index) < stack->size()) {
-        fx->setIsActive(stack->at(index), active);
+    if (!stack || index < 0 || size_t(index) >= stack->size()) {
+        return nullptr;
+    }
+    return stack->at(index);
+}
+
+void MixerPanelModel::setInsertActive(qlonglong trackId, int index, bool active)
+{
+    if (const auto state = insertAt(trackId, index)) {
+        realtimeEffectService()->setIsActive(state, active);
         scheduleReload();
+    }
+}
+
+void MixerPanelModel::removeInsert(qlonglong trackId, int index)
+{
+    if (const auto state = insertAt(trackId, index)) {
+        if (effectViewController()) {
+            effectViewController()->hideEffect(state);
+        }
+        realtimeEffectService()->removeRealtimeEffect(trackId, state);
+        scheduleReload();
+    }
+}
+
+void MixerPanelModel::moveInsert(qlonglong trackId, int index, int newIndex)
+{
+    const auto state = insertAt(trackId, index);
+    if (!state || newIndex == index || !insertAt(trackId, newIndex)) {
+        return;
+    }
+    realtimeEffectService()->moveRealtimeEffect(state, newIndex);
+    scheduleReload();
+}
+
+void MixerPanelModel::showInsert(qlonglong trackId, int index)
+{
+    if (const auto state = insertAt(trackId, index); state && effectViewController()) {
+        effectViewController()->showEffect(state);
     }
 }
 

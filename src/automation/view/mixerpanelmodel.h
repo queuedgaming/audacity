@@ -3,6 +3,7 @@
 */
 #pragma once
 
+#include <functional>
 #include <map>
 
 #include <QObject>
@@ -16,6 +17,8 @@
 #include "playback/iplayback.h"
 #include "playback/itrackplaybackcontrol.h"
 #include "effects/effects_base/irealtimeeffectservice.h"
+#include "effects/effects_base/ieffectviewcontroller.h"
+#include "au3wrap/internal/mixerstrips.h"
 
 #include "automation/ibusroutinginteraction.h"
 
@@ -36,9 +39,16 @@ class MixerPanelModel : public QObject, public muse::async::Asyncable, public mu
     muse::ContextInject<playback::ITrackPlaybackControl> trackPlaybackControl{ this };
     muse::ContextInject<effects::IRealtimeEffectService> realtimeEffectService{ this };
     muse::ContextInject<IBusRoutingInteraction> routing{ this };
+    muse::ContextInject<effects::IEffectViewController> effectViewController{ this };
+
+    friend class MixerPanelModelTest;
 
 public:
     explicit MixerPanelModel(QObject* parent = nullptr);
+
+    using StripsProvider = std::function<std::vector<au3::mixer::Strip>()>;
+    //! Source of the strip snapshot; defaults to the current au3 project (tests replace it)
+    void setStripsProvider(StripsProvider provider) { m_stripsProvider = std::move(provider); }
 
     QVariantList strips() const { return m_strips; }
     //! [leftDb, rightDb] per strip, same order as strips
@@ -56,6 +66,11 @@ public:
     Q_INVOKABLE bool removeSend(qlonglong trackId, const QString& busId);
     Q_INVOKABLE void setInsertActive(qlonglong trackId, int index, bool active);
     Q_INVOKABLE void setInsertsActive(qlonglong trackId, bool active);
+    Q_INVOKABLE void removeInsert(qlonglong trackId, int index);
+    //! Move an insert to `newIndex` within the same strip
+    Q_INVOKABLE void moveInsert(qlonglong trackId, int index, int newIndex);
+    //! Open the effect's editor window
+    Q_INVOKABLE void showInsert(qlonglong trackId, int index);
     Q_INVOKABLE void addBus();
 
 signals:
@@ -65,7 +80,12 @@ signals:
 private:
     void subscribeMeters();
     void scheduleReload();
+    void subscribeProject();
     void notifyTrackChanged(qlonglong trackId);
+    effects::RealtimeEffectStatePtr insertAt(qlonglong trackId, int index) const;
+    std::vector<au3::mixer::Strip> currentStrips() const;
+
+    StripsProvider m_stripsProvider;
 
     QVariantList m_strips;
     std::vector<long long> m_ids;

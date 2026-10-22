@@ -9,19 +9,18 @@ import Muse.UiComponents
 
 import Audacity.Automation
 
-//! Channel-strip mixer: one strip per track and bus, plus master.
-//! Each strip: realtime effect inserts, sends, output routing, pan, fader with meter, mute/solo.
-StyledDialogView {
+import Audacity.ProjectScene
+
+//! Channel-strip mixer (docked panel): one strip per track and bus, plus master.
+//! Each strip: realtime effect inserts (add/remove/reorder/edit/bypass), sends, output routing,
+//! pan, fader with meter, mute/solo.
+Item {
     id: root
 
-    title: qsTrc("automation", "Mixer")
+    property NavigationSection navigationSection: null
+    property int navigationOrderStart: 0
 
-    contentWidth: 1100
-    contentHeight: 640
-
-    resizable: true
-
-    readonly property int stripWidth: 156
+    readonly property int stripWidth: 168
 
     MixerPanelModel {
         id: mixer
@@ -46,10 +45,15 @@ StyledDialogView {
         return Math.max(0, Math.min(1, (db + 60) / 60))
     }
 
+    Rectangle {
+        anchors.fill: parent
+        color: ui.theme.backgroundPrimaryColor
+    }
+
     ColumnLayout {
         anchors.fill: parent
-        anchors.margins: 8
-        spacing: 8
+        anchors.margins: 6
+        spacing: 6
 
         RowLayout {
             spacing: 8
@@ -134,34 +138,82 @@ StyledDialogView {
                                 Repeater {
                                     model: strip.modelData.inserts
                                     delegate: Rectangle {
+                                        id: insertRow
                                         required property var modelData
+                                        readonly property int count: strip.modelData.inserts.length
                                         width: parent.width
-                                        height: 22
+                                        height: 24
                                         radius: 2
                                         color: modelData.active ? ui.theme.buttonColor : ui.theme.backgroundPrimaryColor
                                         opacity: strip.modelData.insertsActive ? 1 : 0.5
-                                        CheckBox {
-                                            id: fxOn
-                                            anchors.left: parent.left
+
+                                        RowLayout {
+                                            anchors.fill: parent
                                             anchors.leftMargin: 3
-                                            anchors.verticalCenter: parent.verticalCenter
-                                            checked: modelData.active
-                                            onClicked: mixer.setInsertActive(strip.modelData.trackId, modelData.index, !checked)
-                                        }
-                                        StyledTextLabel {
-                                            anchors.left: fxOn.right
-                                            anchors.leftMargin: 4
-                                            anchors.right: parent.right
-                                            anchors.verticalCenter: parent.verticalCenter
-                                            horizontalAlignment: Text.AlignLeft
-                                            text: modelData.name
+                                            spacing: 1
+                                            CheckBox {
+                                                checked: insertRow.modelData.active
+                                                onClicked: mixer.setInsertActive(strip.modelData.trackId, insertRow.modelData.index, !checked)
+                                            }
+                                            FlatButton {
+                                                objectName: "insertName"
+                                                Layout.fillWidth: true
+                                                Layout.preferredHeight: 22
+                                                transparent: true
+                                                text: insertRow.modelData.name
+                                                toolTipTitle: qsTrc("automation", "Open effect editor")
+                                                onClicked: mixer.showInsert(strip.modelData.trackId, insertRow.modelData.index)
+                                            }
+                                            FlatButton {
+                                                Layout.preferredWidth: 16
+                                                Layout.preferredHeight: 22
+                                                transparent: true
+                                                enabled: insertRow.modelData.index > 0
+                                                icon: IconCode.ARROW_UP
+                                                toolTipTitle: qsTrc("automation", "Move up")
+                                                onClicked: mixer.moveInsert(strip.modelData.trackId, insertRow.modelData.index, insertRow.modelData.index - 1)
+                                            }
+                                            FlatButton {
+                                                Layout.preferredWidth: 16
+                                                Layout.preferredHeight: 22
+                                                transparent: true
+                                                enabled: insertRow.modelData.index < insertRow.count - 1
+                                                icon: IconCode.ARROW_DOWN
+                                                toolTipTitle: qsTrc("automation", "Move down")
+                                                onClicked: mixer.moveInsert(strip.modelData.trackId, insertRow.modelData.index, insertRow.modelData.index + 1)
+                                            }
+                                            FlatButton {
+                                                Layout.preferredWidth: 16
+                                                Layout.preferredHeight: 22
+                                                transparent: true
+                                                icon: IconCode.CLOSE_X_ROUNDED
+                                                toolTipTitle: qsTrc("automation", "Remove effect")
+                                                onClicked: mixer.removeInsert(strip.modelData.trackId, insertRow.modelData.index)
+                                            }
                                         }
                                     }
                                 }
-                                StyledTextLabel {
-                                    visible: strip.modelData.inserts.length === 0
-                                    text: qsTrc("automation", "No effects")
-                                    opacity: 0.6
+                                FlatButton {
+                                    width: parent.width
+                                    height: 22
+                                    text: qsTrc("automation", "Add effect")
+
+                                    AddEffectMenuModel {
+                                        id: addEffectMenu
+                                        targetTrackId: strip.modelData.trackId
+                                    }
+
+                                    onClicked: {
+                                        addEffectMenu.load()
+                                        addEffectLoader.toggleOpened(addEffectMenu)
+                                    }
+
+                                    StyledMenuLoader {
+                                        id: addEffectLoader
+                                        onHandleMenuItem: function (itemId) {
+                                            addEffectMenu.handleMenuItem(itemId)
+                                        }
+                                    }
                                 }
                             }
 
@@ -229,8 +281,6 @@ StyledDialogView {
                                 }
                             }
 
-                            Item { Layout.fillHeight: true }
-
                             // output
                             StyledDropdown {
                                 visible: !strip.isMaster
@@ -292,7 +342,8 @@ StyledDialogView {
                             // fader + meter
                             RowLayout {
                                 Layout.fillWidth: true
-                                Layout.preferredHeight: 190
+                                Layout.fillHeight: true
+                                Layout.minimumHeight: 90
                                 spacing: 4
 
                                 StyledSlider {

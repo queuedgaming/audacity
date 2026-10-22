@@ -218,9 +218,8 @@ void TrackContextMenuModel::handleMenuItem(const QString& itemId)
     if (itemId == "track-rename") {
         emit trackRenameRequested();
     } else if (itemId == "track-mixer") {
-        if (interactive()) {
-            interactive()->open("audacity://projectscene/mixer");
-        }
+        // show the docked mixer panel (open it if hidden; never toggles it closed)
+        dispatcher()->dispatch("dock-set-open", muse::actions::ActionData::make_arg2<QString, bool>("mixerPanel", true));
     } else if (itemId == "track-bus-routing") {
         if (interactive()) {
             interactive()->open("audacity://projectscene/busrouting");

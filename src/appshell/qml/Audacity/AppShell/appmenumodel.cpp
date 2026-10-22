@@ -355,6 +355,7 @@ MenuItem* AppMenuModel::makeViewMenu()
               << makeMenuItem("open-label-editor")
               << makeMenuItem("open-metadata-editor")
               << makeMenuItem("toggle-history")
+              << makeMenuItem("mixer-board")
               << makeMenuItem(record::RECORD_TOGGLE_ARTIST_MODE_COMMAND)
               << makeSeparator()
 #ifdef MUSE_MODULE_WORKSPACE

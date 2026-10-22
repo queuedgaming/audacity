@@ -342,6 +342,7 @@ const QMap<muse::actions::ActionCode, DockName>& ApplicationUiActions::toggleDoc
 
         { "toggle-tracks", TRACKS_PANEL_NAME },
         { "toggle-history", HISTORY_PANEL_NAME },
+        { "mixer-board", MIXER_PANEL_NAME },
 
         { "toggle-statusbar", PROJECT_STATUSBAR_NAME },
     };

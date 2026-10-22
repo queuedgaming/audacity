@@ -17,6 +17,8 @@ class RealtimeEffectMenuModelBase : public muse::uicomponents::AbstractMenuModel
 {
     Q_OBJECT
     Q_PROPERTY(bool isMasterTrack READ isMasterTrack WRITE prop_setIsMasterTrack NOTIFY isMasterTrackChanged)
+    //! Optional explicit target track (e.g. a mixer strip); NO_TARGET_TRACK = follow the effects panel selection
+    Q_PROPERTY(qlonglong targetTrackId READ targetTrackId WRITE setTargetTrackId NOTIFY targetTrackIdChanged)
 
     muse::ContextInject<effects::IEffectsMenuProvider> effectsMenuProvider{ this };
     muse::ContextInject<IRealtimeEffectPanelTrackSelection> trackSelection{ this };
@@ -24,7 +26,11 @@ class RealtimeEffectMenuModelBase : public muse::uicomponents::AbstractMenuModel
 public:
     explicit RealtimeEffectMenuModelBase(QObject* parent = nullptr);
 
+    static constexpr qlonglong NO_TARGET_TRACK = -1000000;
+
     Q_INVOKABLE void init();
+    qlonglong targetTrackId() const { return m_targetTrackId; }
+    void setTargetTrackId(qlonglong id);
     Q_INVOKABLE void load() final override;
 
 protected:
@@ -37,6 +43,7 @@ protected:
 
 signals:
     void isMasterTrackChanged();
+    void targetTrackIdChanged();
 
 private:
     void prop_setIsMasterTrack(bool isMasterTrack);
@@ -47,6 +54,7 @@ private:
     muse::uicomponents::MenuItem* makeMenuSeparator() final override { return makeSeparator(); }
 
     bool m_isMasterTrack = false;
+    qlonglong m_targetTrackId = NO_TARGET_TRACK;
     bool m_menuIsUpToDate = false;
 };
 }

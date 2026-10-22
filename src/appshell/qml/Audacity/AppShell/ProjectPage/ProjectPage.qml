@@ -446,6 +446,31 @@ DockPage {
                 navigationSection: historyPanel.navigationSection
                 navigationOrderStart: historyPanel.contentNavigationPanelOrderStart
             }
+        },
+        DockPanel {
+            id: mixerPanel
+
+            objectName: root.pageModel.mixerPanelName()
+            title: qsTrc("appshell", "Mixer")
+
+            navigationSection: root.navigationPanelSec(mixerPanel.location)
+
+            height: 400
+            minimumHeight: root.horizontalPanelMinHeight
+            maximumHeight: 900
+
+            groupName: root.horizontalPanelsGroup
+            location: Location.Bottom
+
+            //! NOTE: hidden by default; View > Show mixer (action "mixer-board")
+            visible: false
+
+            dropDestinations: root.horizontalPanelDropDestinations
+
+            MixerPanel {
+                navigationSection: mixerPanel.navigationSection
+                navigationOrderStart: mixerPanel.contentNavigationPanelOrderStart
+            }
         }
     ]
 

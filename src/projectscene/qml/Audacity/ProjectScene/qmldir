@@ -21,3 +21,4 @@ VolumePressureRuler 1.0 trackspanel/audio/VolumePressureRuler.qml
 TrackRulerCustomizePopup 1.0 trackruler/TrackRulerCustomizePopup.qml
 WaveformRuler 1.0 trackruler/WaveformRuler.qml
 SpectrogramTrackRulers 1.0 trackruler/SpectrogramTrackRulers.qml
+MixerPanel 1.0 mixer/MixerPanel.qml
