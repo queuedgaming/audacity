@@ -11,6 +11,7 @@
 #pragma once
 
 class EffectSettings;
+class EffectInstance;
 
 //! Writes automated parameter values into an effect's settings for a given project time.
 /*! Apply() runs on the audio thread (playback) or the export thread: it must not allocate,
@@ -19,5 +20,7 @@ class RealtimeEffectAutomation
 {
 public:
     virtual ~RealtimeEffectAutomation() = default;
-    virtual void Apply(EffectSettings& settings, double time) const noexcept = 0;
+    //! @param instance the instance about to process (may be null): plugin formats whose
+    //! parameters are not plain settings fields (VST3) queue their changes there
+    virtual void Apply(EffectSettings& settings, double time, EffectInstance* instance) const noexcept = 0;
 };

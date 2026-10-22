@@ -68,6 +68,7 @@ set(MODULE_SRC
     ${CMAKE_CURRENT_LIST_DIR}/internal/takelanes.h
     ${CMAKE_CURRENT_LIST_DIR}/internal/paramautomation.h
     ${CMAKE_CURRENT_LIST_DIR}/internal/paramautomation.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/internal/paramautomation_formats.h
     )
 
 # ==================================
@@ -142,6 +143,18 @@ set(MODULE_LINK_PUBLIC
         # https://github.com/audacity/audacity/issues/11804
         wxBase
 )
+
+# Parameter automation of plugin formats (VST3 parameters, LV2 control ports)
+if (AU_MODULE_EFFECTS_VST)
+    list(APPEND MODULE_SRC ${CMAKE_CURRENT_LIST_DIR}/internal/paramautomation_vst3.cpp)
+    list(APPEND MODULE_DEF -DAU_PARAMAUTOMATION_VST3)
+    list(APPEND MODULE_LINK au3-vst3)
+endif()
+if (AU_MODULE_EFFECTS_LV2)
+    list(APPEND MODULE_SRC ${CMAKE_CURRENT_LIST_DIR}/internal/paramautomation_lv2.cpp)
+    list(APPEND MODULE_DEF -DAU_PARAMAUTOMATION_LV2)
+    list(APPEND MODULE_LINK au3-lv2)
+endif()
 
 set(MODULE_USE_PCH OFF)
 set(MODULE_USE_UNITY OFF)

@@ -1187,3 +1187,16 @@ void VST3Wrapper::CopySettingsContents(const EffectSettings& src, EffectSettings
     //Don't allocate in worker
     std::swap(from.parameterChanges, to.parameterChanges);
 }
+
+void VST3Wrapper::QueueParameterChange(Steinberg::Vst::ParamID id, Steinberg::Vst::ParamValue value) noexcept
+{
+    for (auto& p : mParameters) {
+        if (p.first == id) {
+            p.second = value;
+            return;
+        }
+    }
+    if (mParameters.size() < mParameters.capacity()) {
+        mParameters.emplace_back(id, value);
+    }
+}

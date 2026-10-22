@@ -207,3 +207,11 @@ Steinberg::IPtr<Steinberg::Vst::IComponent> VST3Instance::effectComponent() cons
 {
     return mWrapper->mEffectComponent;
 }
+
+void VST3Instance::QueueParameterChange(uint32_t paramId, double normalizedValue) noexcept
+{
+    mWrapper->QueueParameterChange(paramId, normalizedValue);
+    for (auto& pProcessor : mProcessors) {
+        pProcessor->mWrapper->QueueParameterChange(paramId, normalizedValue);
+    }
+}

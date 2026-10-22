@@ -201,7 +201,7 @@ GetEffectStagesImpl(const Host& host)
             settings });
         // Audacity 4 parameter automation follows the state into rendering/export
         if (auto pAutomation = pState->GetAutomation()) {
-            stage.automation = [pAutomation](EffectSettings& s, double t) { pAutomation->Apply(s, t); };
+            stage.automation = [pAutomation](EffectSettings& s, double t, EffectInstance* i) { pAutomation->Apply(s, t, i); };
         }
     }
     return result;

@@ -110,7 +110,7 @@ struct StageSpecification final {
 
     //! Audacity 4 parameter automation: writes automated values for a project time into the
     //! stage's settings; evaluated every EffectStage::AutomationBlockSize samples. May be empty.
-    std::function<void(EffectSettings&, double)> automation {};
+    std::function<void(EffectSettings&, double, EffectInstance*)> automation {};
 };
 }
 #endif

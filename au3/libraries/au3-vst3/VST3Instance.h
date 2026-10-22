@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 
 #include <public.sdk/source/vst/utility/uid.h>
 
@@ -64,6 +65,11 @@ public:
     size_t ProcessBlock(EffectSettings& settings, const float* const* inBlock, float* const* outBlock, size_t blockLen) override;
 
     VST3Wrapper& GetWrapper();
+
+    //! Audacity 4 parameter automation (audio/export thread): queue a normalized value for the
+    //! next processed block of this instance and of all its realtime processors.
+    //! Allocation-free; changes beyond the controller's parameter count are dropped.
+    void QueueParameterChange(uint32_t paramId, double normalizedValue) noexcept;
 
     unsigned GetAudioOutCount() const override;
     unsigned GetAudioInCount() const override;

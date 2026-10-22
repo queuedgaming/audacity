@@ -52,7 +52,7 @@ public:
         double sampleRate, std::optional<sampleCount> genLength);
 
     //! Audacity 4 parameter automation (see MixerOptions::StageSpecification::automation)
-    using Automation = std::function<void(EffectSettings&, double)>;
+    using Automation = std::function<void(EffectSettings&, double, EffectInstance*)>;
     static constexpr size_t AutomationBlockSize = 256;
     void SetAutomation(Automation automation, double startTime)
     {

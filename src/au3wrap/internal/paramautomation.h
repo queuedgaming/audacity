@@ -73,6 +73,20 @@ struct ParamInfo {
     double value = 0.0;   //!< current (unautomated) value in the effect's settings
     bool isInteger = false;
     bool isBool = false;
+
+    // Plugin formats (VST3, LV2)
+    std::string name;      //!< display name (empty: use key)
+    std::string units;     //!< e.g. "dB", "Hz"
+    bool normalized = false; //!< value range is the plugin's normalized 0..1 (VST3)
+    bool logarithmic = false; //!< envelope interpolates geometrically (LV2 lv2:logarithmic)
+    int stepCount = 0;       //!< >0: discrete (VST3 stepCount; LV2 enumeration/integer)
+    std::vector<std::string> enumLabels; //!< labels of discrete values, if any
+};
+
+enum class ParamFormat {
+    BuiltIn, //!< settings visited with SettingsVisitor; key = settings key
+    VST3,    //!< key = decimal VST3 ParamID; lane values normalized 0..1
+    LV2,     //!< key = control port symbol; lane values plain port values
 };
 
 namespace paramautomation {
@@ -89,6 +103,13 @@ size_t insertPoint(std::vector<ParamPoint>& pts, ParamPoint p);
 
 //! Numeric parameters of the effect of `state`, with ranges and current values
 std::vector<ParamInfo> listParams(const RealtimeEffectState& state);
+
+//! Which plugin format (and so which key/value convention) the effect of `state` uses
+ParamFormat formatOf(const RealtimeEffectState& state);
+
+//! Display text of `value` for parameter `key` (main thread; uses the plugin's own
+//! value-to-string where it has one, e.g. VST3 getParamStringByValue, LV2 scale point labels)
+std::string valueText(const RealtimeEffectState& state, const std::string& key, double value);
 
 //! occurrence of the state at `index` among states of the same plugin in `list`
 int occurrenceAt(const RealtimeEffectList& list, size_t index);

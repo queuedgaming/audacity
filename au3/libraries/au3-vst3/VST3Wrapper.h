@@ -113,6 +113,11 @@ public:
     //! changed the DSP model state
     void FlushParameters(EffectSettings& settings, bool* hasChanges = nullptr);
 
+    //! Audacity 4 parameter automation: queue a normalized value to be sent with the next
+    //! Process() call (at sample offset 0). Allocation-free: uses the capacity reserved for
+    //! all parameters at initialization; replaces a pending value for the same id.
+    void QueueParameterChange(Steinberg::Vst::ParamID id, Steinberg::Vst::ParamValue value) noexcept;
+
     //Intialize first, before calling to Process. It's safe to it use from another thread
     size_t Process(const float* const* inBlock, float* const* outBlock, size_t blockLen);
 

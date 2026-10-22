@@ -2,6 +2,7 @@
 * Audacity: A Digital Audio Editor
 */
 #include "paramautomation.h"
+#include "paramautomation_formats.h"
 
 #include <algorithm>
 #include <cmath>
@@ -19,6 +20,18 @@
 #include "au3-xml/XMLWriter.h"
 
 using namespace au::au3;
+
+namespace {
+const au::au3::paramautomation::formats::Handler* handlerFor(const EffectInstanceFactory& factory)
+{
+    for (const auto* h : au::au3::paramautomation::formats::handlers()) {
+        if (h->matches(factory)) {
+            return h;
+        }
+    }
+    return nullptr;
+}
+}
 
 namespace {
 const ChannelGroup::Attachments::RegisteredFactory paramAutomationKey {
@@ -227,7 +240,7 @@ public:
     Applier(EffectSettingsManager& manager, std::vector<AppliedLane> lanes)
         : mManager(manager), mLanes(std::move(lanes)) {}
 
-    void Apply(EffectSettings& settings, double time) const noexcept override
+    void Apply(EffectSettings& settings, double time, EffectInstance*) const noexcept override
     {
         Writer writer(mLanes, time);
         mManager.VisitSettings(writer, settings);
@@ -383,9 +396,83 @@ std::vector<ParamInfo> paramautomation::listParams(const RealtimeEffectState& cs
     if (!factory) {
         return {};
     }
+    if (const auto* handler = handlerFor(*factory)) {
+        return handler->list(state);
+    }
     Collector collector;
     factory->VisitSettings(collector, cstate.GetSettings());
     return collector.params;
+}
+
+ParamFormat paramautomation::formatOf(const RealtimeEffectState& cstate)
+{
+    auto& state = const_cast<RealtimeEffectState&>(cstate);
+    const auto* factory = state.GetEffect();
+    const auto* handler = factory ? handlerFor(*factory) : nullptr;
+    return handler ? handler->format : ParamFormat::BuiltIn;
+}
+
+std::string paramautomation::valueText(const RealtimeEffectState& cstate, const std::string& key, double value)
+{
+    auto& state = const_cast<RealtimeEffectState&>(cstate);
+    const auto* factory = state.GetEffect();
+    if (const auto* handler = factory ? handlerFor(*factory) : nullptr) {
+        if (auto text = handler->valueText(state, key, value)) {
+            return *text;
+        }
+    }
+    char buf[64];
+    std::snprintf(buf, sizeof(buf), std::fabs(value) < 10 ? "%.2f" : "%.1f", value);
+    return buf;
+}
+
+// ---- format support ------------------------------------------------------------------------
+using namespace au::au3::paramautomation::formats;
+
+const std::vector<const Handler*>& paramautomation::formats::handlers()
+{
+    static const std::vector<const Handler*> all = [] {
+        std::vector<const Handler*> h;
+#ifdef AU_PARAMAUTOMATION_VST3
+        h.push_back(&vst3Handler());
+#endif
+#ifdef AU_PARAMAUTOMATION_LV2
+        h.push_back(&lv2Handler());
+#endif
+        return h;
+    }();
+    return all;
+}
+
+PreparedLane PreparedLane::make(const ParamLane& lane, double min, double max, bool logarithmic, int stepCount)
+{
+    PreparedLane p;
+    p.step = lane.step;
+    p.min = std::min(min, max);
+    p.max = std::max(min, max);
+    p.stepCount = stepCount;
+    p.logarithmic = logarithmic && p.min > 0.0;
+    p.points = lane.points;
+    if (p.logarithmic) {
+        for (auto& pt : p.points) {
+            pt.v = std::log(std::clamp(pt.v, p.min, p.max));
+        }
+    }
+    return p;
+}
+
+double PreparedLane::value(double t) const noexcept
+{
+    double v = evaluate(points.data(), points.size(), step, t, logarithmic ? std::log(min) : min);
+    if (logarithmic) {
+        v = std::exp(v);
+    }
+    v = std::clamp(v, min, max);
+    if (stepCount > 0 && max > min) {
+        const double k = std::round((v - min) / (max - min) * stepCount);
+        v = min + (max - min) * k / stepCount;
+    }
+    return v;
 }
 
 int paramautomation::occurrenceAt(const RealtimeEffectList& list, size_t index)
@@ -410,6 +497,9 @@ std::shared_ptr<const RealtimeEffectAutomation> paramautomation::makeApplier(
     auto* factory = const_cast<EffectInstanceFactory*>(state.GetEffect());
     if (!factory || lanes.empty()) {
         return {};
+    }
+    if (const auto* handler = handlerFor(*factory)) {
+        return handler->makeApplier(state, lanes);
     }
     std::vector<AppliedLane> applied;
     for (const auto* lane : lanes) {
@@ -450,6 +540,9 @@ void paramautomation::installTrack(WaveTrack& track)
 
 void paramautomation::install(AudacityProject& project)
 {
+#ifdef AU_PARAMAUTOMATION_VST3
+    formats::releaseVst3Instances();
+#endif
     for (auto* track : TrackList::Get(project).Any<WaveTrack>()) {
         installTrack(*track);
     }

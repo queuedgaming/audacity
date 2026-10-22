@@ -289,7 +289,8 @@ std::optional<size_t> EffectStage::FetchProcessAndAdvance(
             // Audacity 4 parameter automation: sub-blocks with freshly evaluated values
             for (size_t sub = 0; sub < curBlockSize; sub += AutomationBlockSize) {
                 const size_t n = std::min(AutomationBlockSize, curBlockSize - sub);
-                mAutomation(mSettings, mAutomationStart + double(mAutomationPosition + static_cast<long long>(sub)) / mSampleRate);
+                mAutomation(mSettings, mAutomationStart + double(mAutomationPosition + static_cast<long long>(sub)) / mSampleRate,
+                            pInstance.get());
                 if (!Process(*pInstance, ii, data, n, outBufferOffset + sub, sub)) {
                     return {};
                 }

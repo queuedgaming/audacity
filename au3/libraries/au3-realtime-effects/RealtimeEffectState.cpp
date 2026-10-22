@@ -719,7 +719,7 @@ size_t RealtimeEffectState::Process(
         for (size_t block = 0; block < numSamples; block += blockSize) {
             auto cnt = std::min(numSamples - block, blockSize);
             if (pAutomation) {
-                pAutomation->Apply(mWorkerSettings.settings, sProcessTime + double(block) / sProcessRate);
+                pAutomation->Apply(mWorkerSettings.settings, sProcessTime + double(block) / sProcessRate, pInstance.get());
             }
             // Assuming we are in a processing scope, use the worker settings
             auto processed = pInstance->RealtimeProcess(
