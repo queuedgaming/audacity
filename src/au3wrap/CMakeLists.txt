@@ -66,6 +66,8 @@ set(MODULE_SRC
     ${CMAKE_CURRENT_LIST_DIR}/internal/projectkey.h
     ${CMAKE_CURRENT_LIST_DIR}/internal/projectkey.cpp
     ${CMAKE_CURRENT_LIST_DIR}/internal/takelanes.h
+    ${CMAKE_CURRENT_LIST_DIR}/internal/paramautomation.h
+    ${CMAKE_CURRENT_LIST_DIR}/internal/paramautomation.cpp
     )
 
 # ==================================

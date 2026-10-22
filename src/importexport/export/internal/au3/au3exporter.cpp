@@ -23,6 +23,7 @@
 
 #include "au3wrap/au3types.h"
 #include "au3wrap/internal/wxtypes_convert.h"
+#include "au3wrap/internal/paramautomation.h"
 #include "importexport/export/exportutils.h"
 #include "trackedit/itrackeditproject.h"
 
@@ -241,6 +242,9 @@ std::string Au3Exporter::formatExtension(const Options& options) const
 
 muse::Ret Au3Exporter::runExport(Au3Project& project, const wxFileName& wxfilename, muse::ProgressPtr progress)
 {
+    // Parameter automation must follow the current envelopes into the rendered mix
+    au::au3::paramautomation::install(project);
+
     try {
         auto processor = m_plugin->CreateProcessor(m_format);
         if (!processor->Initialize(project,

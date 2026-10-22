@@ -37,6 +37,9 @@ set(MODULE_TEST_LINK
     au3-numeric-formats
     au3-label-track
     au3-realtime-effects
+    au3-import-export
+    au3-mixer
+    au3-xml
     effects_builtin_collection
 
     muse::ui

@@ -10,6 +10,7 @@
 
 #include "au3wrap/au3types.h"
 #include "au3wrap/internal/wxtypes_convert.h"
+#include "au3wrap/internal/paramautomation.h"
 
 #include "defaultplaybackpolicy.h"
 #include "au3audioiolistener.h"
@@ -127,6 +128,8 @@ int Au3AudioEngine::startStream(const TransportSequences& sequences, const doubl
     if (options.streamStartTime.has_value()) {
         au3Options.pStartTime = *options.streamStartTime;
     }
+    // Install current parameter automation on the realtime effect states before playing
+    au::au3::paramautomation::install(project);
     auto& audioIO = *AudioIO::Get();
     const int token = audioIO.StartStream(sequences, startTime, endTime, mixerEndTime, au3Options);
     if (token > 0) {

@@ -2298,3 +2298,345 @@ TEST(RecordConfigurationTests, LowLatencyThresholdDefaultAndMigration)
     EXPECT_DOUBLE_EQ(migrateLowLatencyThresholdMs(40.0), 40.0);
 }
 }
+
+// ---- plugin parameter automation ---------------------------------------------------------
+#include "au3wrap/internal/paramautomation.h"
+#include "au3-xml/XMLFileReader.h"
+#include "au3-import-export/ExportPluginHelpers.h"
+#include "au3-mixer/Mix.h"
+#include <atomic>
+#include <new>
+#include <thread>
+
+namespace {
+std::atomic<long> gCountedAllocs { 0 };
+thread_local bool tCountAllocs = false;
+}
+
+void* operator new(std::size_t n)
+{
+    if (tCountAllocs) {
+        gCountedAllocs.fetch_add(1);
+    }
+    if (void* p = std::malloc(n ? n : 1)) {
+        return p;
+    }
+    throw std::bad_alloc();
+}
+
+void operator delete(void* p) noexcept { std::free(p); }
+void operator delete(void* p, std::size_t) noexcept { std::free(p); }
+
+namespace au::record {
+using au::au3::ParamAutomationData;
+using au::au3::ParamLane;
+using au::au3::ParamPoint;
+namespace pa = au::au3::paramautomation;
+
+namespace {
+ParamLane makeupLane(const PluginID& id, std::vector<ParamPoint> pts, bool step = false)
+{
+    ParamLane lane;
+    lane.effectId = id.ToStdString();
+    lane.paramKey = "makeupGainDb";
+    lane.step = step;
+    lane.points = std::move(pts);
+    return lane;
+}
+
+std::vector<float> monoSine(size_t frames, double rate, float amp = 0.01f)
+{
+    std::vector<float> v(frames);
+    for (size_t i = 0; i < frames; ++i) {
+        v[i] = amp * float(std::sin(2 * M_PI * 440.0 * double(i) / rate));
+    }
+    return v;
+}
+
+double windowDb(const std::vector<float>& v, double rate, double t0, double t1)
+{
+    std::vector<float> w(v.begin() + size_t(t0 * rate), v.begin() + size_t(t1 * rate));
+    return 20.0 * std::log10(rms(w));
+}
+}
+
+TEST(ParamAutomation, EnvelopeEvaluation)
+{
+    const std::vector<ParamPoint> pts { { 1.0, 0.0 }, { 2.0, 10.0 }, { 4.0, -10.0 } };
+    EXPECT_DOUBLE_EQ(pa::evaluate({}, false, 1.0, 7.0), 7.0); // empty -> fallback
+    EXPECT_DOUBLE_EQ(pa::evaluate(pts, false, 0.0, 7.0), 0.0); // holds before first
+    EXPECT_DOUBLE_EQ(pa::evaluate(pts, false, 1.5, 7.0), 5.0);
+    EXPECT_DOUBLE_EQ(pa::evaluate(pts, false, 2.0, 7.0), 10.0);
+    EXPECT_DOUBLE_EQ(pa::evaluate(pts, false, 3.0, 7.0), 0.0);
+    EXPECT_DOUBLE_EQ(pa::evaluate(pts, false, 9.0, 7.0), -10.0); // holds after last
+    EXPECT_DOUBLE_EQ(pa::evaluate(pts, true, 1.9, 7.0), 0.0); // step holds the left value
+    EXPECT_DOUBLE_EQ(pa::evaluate(pts, true, 3.9, 7.0), 10.0);
+
+    std::vector<ParamPoint> v;
+    EXPECT_EQ(pa::insertPoint(v, { 2.0, 1.0 }), 0u);
+    EXPECT_EQ(pa::insertPoint(v, { 1.0, 1.0 }), 0u);
+    EXPECT_EQ(pa::insertPoint(v, { 3.0, 1.0 }), 2u);
+    EXPECT_EQ(pa::insertPoint(v, { 2.0, 5.0 }), 1u); // same time replaces
+    ASSERT_EQ(v.size(), 3u);
+    EXPECT_DOUBLE_EQ(v[1].v, 5.0);
+}
+
+TEST_F(Au3RecordTests, ParamAutomationXmlRoundTrip)
+{
+    Au3WaveTrack* track = addSelectedMonoTrack();
+    auto& data = ParamAutomationData::Get(*track);
+    data.lanes.push_back(makeupLane(kCompressorId, { { 0.0, -3.5 }, { 1.0 / 3.0, 12.25 } }, true));
+    auto other = makeupLane(kCompressorId, { { 2.0, 1.0 } });
+    other.occurrence = 1;
+    other.paramKey = "thresholdDb";
+    other.visible = false;
+    data.lanes.push_back(other);
+    data.shown = true;
+    data.activeLane = 1;
+
+    // saved inside the track element
+    XMLStringWriter trackXml;
+    track->WriteXML(trackXml);
+    EXPECT_NE(trackXml.find(wxT("<paramlane")), wxString::npos);
+
+    struct Wrap : XMLTagHandler {
+        ParamAutomationData data;
+        bool HandleXMLTag(const std::string_view&, const AttributesList&) override { return true; }
+        XMLTagHandler* HandleXMLChild(const std::string_view& tag) override
+        {
+            return tag == ParamAutomationData::XMLTag() ? &data : nullptr;
+        }
+    } wrap;
+    XMLStringWriter xml;
+    xml.StartTag(wxT("wrap"));
+    data.WriteXML(xml);
+    xml.EndTag(wxT("wrap"));
+    XMLFileReader reader;
+    ASSERT_TRUE(reader.ParseString(&wrap, xml));
+    const auto& back = wrap.data;
+    ASSERT_EQ(back.lanes.size(), 2u);
+    EXPECT_TRUE(back.shown);
+    EXPECT_EQ(back.activeLane, 1);
+    for (size_t i = 0; i < 2; ++i) {
+        EXPECT_TRUE(back.lanes[i].sameTarget(data.lanes[i]));
+        EXPECT_EQ(back.lanes[i].step, data.lanes[i].step);
+        EXPECT_EQ(back.lanes[i].visible, data.lanes[i].visible);
+        EXPECT_EQ(back.lanes[i].points, data.lanes[i].points); // exact (%.17g)
+    }
+}
+
+TEST_F(Au3RecordTests, ParamAutomationUndoRestoresLanes)
+{
+    Au3WaveTrack* track = addSelectedMonoTrack();
+    const auto trackId = track->GetId();
+    auto& history = ::ProjectHistory::Get(projectRef());
+    history.InitialState();
+
+    ParamAutomationData::Get(*track).lanes.push_back(makeupLane(kCompressorId, { { 0.0, 0.0 } }));
+    history.PushState(::TranslatableString::untranslatable(wxString("Add lane")),
+                      ::TranslatableString::untranslatable(wxString("Add lane")));
+    track = DomAccessor::findWaveTrack(projectRef(), trackId);
+    pa::insertPoint(ParamAutomationData::Get(*track).lanes[0].points, { 1.0, 6.0 });
+    history.PushState(::TranslatableString::untranslatable(wxString("Add point")),
+                      ::TranslatableString::untranslatable(wxString("Add point")));
+
+    auto undo = [&] {
+        UndoManager::Get(projectRef()).Undo([&history](const UndoStackElem& elem) { history.PopState(elem.state); });
+        return &ParamAutomationData::Get(*DomAccessor::findWaveTrack(projectRef(), trackId));
+    };
+    auto* d = undo();
+    ASSERT_EQ(d->lanes.size(), 1u);
+    EXPECT_EQ(d->lanes[0].points.size(), 1u);
+    d = undo();
+    EXPECT_TRUE(d->lanes.empty());
+    UndoManager::Get(projectRef()).Redo([&history](const UndoStackElem& elem) { history.PopState(elem.state); });
+    d = &ParamAutomationData::Get(*DomAccessor::findWaveTrack(projectRef(), trackId));
+    EXPECT_EQ(d->lanes.size(), 1u);
+}
+
+TEST_F(Au3RecordTests, ParamAutomationListsCompressorParams)
+{
+    RealtimeEffectState::EffectFactory::Scope scope { &builtinFactory };
+    Au3WaveTrack* track = addSelectedMonoTrack();
+    auto& list = RealtimeEffectList::Get(*track);
+    auto a = addEffect(list, kCompressorId);
+    auto b = addEffect(list, kCompressorId);
+    EXPECT_EQ(pa::occurrenceAt(list, 0), 0);
+    EXPECT_EQ(pa::occurrenceAt(list, 1), 1);
+    const auto params = pa::listParams(*a);
+    auto it = std::find_if(params.begin(), params.end(), [](const auto& p) { return p.key == "makeupGainDb"; });
+    ASSERT_NE(it, params.end());
+    EXPECT_DOUBLE_EQ(it->min, -30.0);
+    EXPECT_DOUBLE_EQ(it->max, 30.0);
+    EXPECT_FALSE(it->isInteger);
+    EXPECT_GE(params.size(), 7u);
+}
+
+TEST_F(Au3RecordTests, ParamAutomationApplyIsAllocationFreeAndClamps)
+{
+    RealtimeEffectState::EffectFactory::Scope scope { &builtinFactory };
+    Au3WaveTrack* track = addSelectedMonoTrack();
+    auto state = addEffect(RealtimeEffectList::Get(*track), kCompressorId);
+    auto lane = makeupLane(kCompressorId, { { 0.0, 0.0 }, { 1.0, 100.0 } });
+    auto lane2 = lane;
+    lane2.paramKey = "thresholdDb";
+    lane2.points = { { 0.0, -20.0 } };
+    auto applier = pa::makeApplier(*state, { &lane, &lane2 });
+    ASSERT_TRUE(applier);
+    EffectSettings settings = state->GetSettings();
+    gCountedAllocs = 0;
+    tCountAllocs = true;
+    for (int i = 0; i < 1000; ++i) {
+        applier->Apply(settings, i / 1000.0);
+    }
+    applier->Apply(settings, 0.1);
+    tCountAllocs = false;
+    EXPECT_EQ(gCountedAllocs.load(), 0);
+    EXPECT_NEAR(settings.cast<CompressorSettings>()->makeupGainDb, 10.0, 1e-9);
+    EXPECT_NEAR(settings.cast<CompressorSettings>()->thresholdDb, -20.0, 1e-9);
+    applier->Apply(settings, 0.9);
+    EXPECT_NEAR(settings.cast<CompressorSettings>()->makeupGainDb, 30.0, 1e-9); // clamped to max
+}
+
+TEST_F(Au3RecordTests, ParamAutomationPlaybackRampsCompressorMakeup)
+{
+    RealtimeEffectState::EffectFactory::Scope scope { &builtinFactory };
+    Au3WaveTrack* track = addSelectedMonoTrack();
+    auto state = addEffect(RealtimeEffectList::Get(*track), kCompressorId);
+    ParamAutomationData::Get(*track).lanes.push_back(makeupLane(kCompressorId, { { 0.0, 0.0 }, { 1.0, 24.0 } }));
+    pa::install(projectRef());
+    ASSERT_TRUE(state->GetAutomation());
+
+    const double rate = TEST_SAMPLE_RATE;
+    auto run = [&](bool withTime) {
+        // the caller owns the instance while processing (as RealtimeEffectManager does)
+        auto instance = state->Initialize(rate, 4096);
+        EXPECT_TRUE(instance);
+        EXPECT_TRUE(state->AddGroup(track, 1, float(rate), 4096));
+        const size_t total = size_t(rate);
+        auto in = monoSine(total, rate);
+        std::vector<float> out(total), dummy(4096);
+        for (size_t pos = 0; pos < total; pos += 1000) {
+            const size_t n = std::min<size_t>(1000, total - pos);
+            RealtimeEffectState::SetProcessTime(withTime ? pos / rate : -1.0, withTime ? rate : 0.0);
+            const float* ip[] = { in.data() + pos };
+            float* op[] = { out.data() + pos };
+            EXPECT_TRUE(state->ProcessStart(true));
+            state->Process(track, 1, ip, op, dummy.data(), n);
+            state->ProcessEnd();
+        }
+        RealtimeEffectState::SetProcessTime(-1.0, 0.0);
+        state->Finalize();
+        return out;
+    };
+    const auto ramp = run(true);
+    // expected makeup 24*t dB: 0.15 s -> 3.6, 0.85 s -> 20.4
+    EXPECT_NEAR(windowDb(ramp, rate, 0.8, 0.9) - windowDb(ramp, rate, 0.1, 0.2), 16.8, 1.5);
+    EXPECT_NEAR(windowDb(ramp, rate, 0.45, 0.55) - windowDb(ramp, rate, 0.1, 0.2), 8.4, 1.5);
+
+    // without a process time (e.g. monitoring) automation is not applied: flat level
+    const auto flat = run(false);
+    EXPECT_NEAR(windowDb(flat, rate, 0.8, 0.9) - windowDb(flat, rate, 0.1, 0.2), 0.0, 0.5);
+}
+
+TEST_F(Au3RecordTests, ParamAutomationExportMixRampsCompressorMakeup)
+{
+    RealtimeEffectState::EffectFactory::Scope scope { &builtinFactory };
+    Au3WaveTrack* track = addSelectedMonoTrack();
+    const double rate = track->GetRate();
+    auto tone = monoSine(size_t(2 * rate), rate);
+    track->Append(0, reinterpret_cast<constSamplePtr>(tone.data()), floatSample, tone.size());
+    track->Flush();
+    addEffect(RealtimeEffectList::Get(*track), kCompressorId);
+    ParamAutomationData::Get(*track).lanes.push_back(makeupLane(kCompressorId, { { 0.0, 0.0 }, { 2.0, 24.0 } }));
+
+    auto render = [&]() {
+        pa::install(projectRef());
+        auto mixer = ExportPluginHelpers::CreateMixer(projectRef(), false, 0.0, 2.0, 1, 4096, true, rate,
+                                                      floatSample, nullptr);
+        std::vector<float> out;
+        while (auto n = mixer->Process()) {
+            auto p = reinterpret_cast<const float*>(mixer->GetBuffer());
+            out.insert(out.end(), p, p + n);
+        }
+        return out;
+    };
+    const auto ramp = render();
+    ASSERT_GE(ramp.size(), size_t(1.9 * rate));
+    // 12 dB per second of makeup
+    EXPECT_NEAR(windowDb(ramp, rate, 1.6, 1.8) - windowDb(ramp, rate, 0.2, 0.4), 16.8, 1.5);
+
+    // removing the lane renders flat again
+    ParamAutomationData::Get(*track).lanes.clear();
+    const auto flat = render();
+    EXPECT_NEAR(windowDb(flat, rate, 1.6, 1.8) - windowDb(flat, rate, 0.2, 0.4), 0.0, 0.5);
+}
+
+namespace {
+//! Applier that detects use after destruction
+class CheckedAutomation final : public RealtimeEffectAutomation
+{
+public:
+    explicit CheckedAutomation(std::atomic<long>& bad)
+        : mBad(bad) {}
+    ~CheckedAutomation() override { mAlive.store(0); }
+    void Apply(EffectSettings&, double) const noexcept override
+    {
+        if (mAlive.load() != kAlive) {
+            mBad.fetch_add(1);
+        }
+        mApplied.fetch_add(1);
+    }
+
+    static constexpr int kAlive = 0x5a5a;
+    std::atomic<int> mAlive { kAlive };
+    std::atomic<long>& mBad;
+    static inline std::atomic<long> mApplied { 0 };
+};
+}
+
+TEST_F(Au3RecordTests, ParamAutomationSwapWhileProcessingIsSafe)
+{
+    RealtimeEffectState::EffectFactory::Scope scope { &builtinFactory };
+    Au3WaveTrack* track = addSelectedMonoTrack();
+    auto state = addEffect(RealtimeEffectList::Get(*track), kCompressorId);
+    const double rate = TEST_SAMPLE_RATE;
+    auto instance = state->Initialize(rate, 4096);
+    ASSERT_TRUE(instance);
+    ASSERT_TRUE(state->AddGroup(track, 1, float(rate), 4096));
+
+    std::atomic<long> bad { 0 };
+    std::atomic<bool> stop { false };
+    CheckedAutomation::mApplied = 0;
+    state->SetAutomation(std::make_shared<CheckedAutomation>(bad));
+    std::thread audio([&] {
+        auto in = monoSine(1024, rate);
+        std::vector<float> out(1024), dummy(1024);
+        double t = 0;
+        while (!stop.load()) {
+            RealtimeEffectState::SetProcessTime(t, rate);
+            const float* ip[] = { in.data() };
+            float* op[] = { out.data() };
+            state->ProcessStart(true);
+            state->Process(track, 1, ip, op, dummy.data(), 1024);
+            state->ProcessEnd();
+            t += 1024 / rate;
+        }
+    });
+    for (int i = 0; i < 2000; ++i) {
+        state->SetAutomation(i % 7 == 6 ? nullptr : std::make_shared<CheckedAutomation>(bad));
+    }
+    // let the audio thread run with the final object a little
+    state->SetAutomation(std::make_shared<CheckedAutomation>(bad));
+    const auto before = CheckedAutomation::mApplied.load();
+    for (int spin = 0; spin < 2000 && CheckedAutomation::mApplied.load() < before + 8; ++spin) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    stop = true;
+    audio.join();
+    state->SetAutomation(nullptr);
+    state->Finalize();
+    EXPECT_EQ(bad.load(), 0);
+    EXPECT_GT(CheckedAutomation::mApplied.load(), 8);
+}
+}
