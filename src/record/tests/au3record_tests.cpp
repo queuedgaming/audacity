@@ -44,6 +44,7 @@
 #include "au3-realtime-effects/RealtimeEffectState.h"
 #include "effects/builtin_collection/denoise/denoiseeffects.h"
 #include "effects/builtin_collection/dynamics/compressor/compressoreffect.h"
+#include "effects/builtin_collection/dynamics/truepeak/truepeaklimitereffect.h"
 
 
 #include "au3wrap/internal/au3project.h"
@@ -2113,12 +2114,17 @@ namespace {
 const PluginID kCompressorId = wxT("au-test:compressor");
 const PluginID kNoiseId = wxT("au-test:noise-suppression");
 const PluginID kBreathId = wxT("au-test:breath-removal");
+const PluginID kTruePeakId = wxT("au-test:true-peak-limiter");
 
 const EffectInstanceFactory* builtinFactory(const PluginID& id)
 {
     static au::effects::CompressorEffect compressor;
     static au::effects::NoiseSuppressionEffect noise;
     static au::effects::BreathRemovalEffect breath;
+    static au::effects::TruePeakLimiterEffect truePeak;
+    if (id == kTruePeakId) {
+        return &truePeak;
+    }
     if (id == kCompressorId) {
         return &compressor;
     }
@@ -3572,5 +3578,421 @@ TEST_F(Au3RecordTests, MixerStripEditsAreSavedAndUndoable)
     EXPECT_NEAR(stripA().volumeDb, -12.04, 0.01);
     EXPECT_FLOAT_EQ(stripA().pan, 0.75f);
     EXPECT_TRUE(stripA().mute);
+}
+}
+
+// ---- true-peak limiter and gain staging ---------------------------------------------------
+#include "au3-math/TruePeak.h"
+#include "au3wrap/internal/gainstaging.h"
+#include <random>
+
+namespace au::record {
+namespace {
+namespace gst = au::au3::gainstaging;
+
+//! fs/4 sine at 45 degrees: every sample is +-1 (0 dBFS) but the waveform peaks at +3.01 dBTP
+std::vector<float> quarterRateIsp(size_t n, float amp = 1.0f)
+{
+    std::vector<float> v(n);
+    for (size_t i = 0; i < n; ++i) {
+        v[i] = amp * float(std::sqrt(2.0) * std::sin(M_PI / 2 * double(i) + M_PI / 4));
+    }
+    return v;
+}
+
+double truePeakDb(const std::vector<std::vector<float> >& ch, size_t factor = 4, size_t taps = 64)
+{
+    TruePeakMeter m(ch.size(), factor, taps);
+    for (size_t c = 0; c < ch.size(); ++c) {
+        m.Process(c, ch[c].data(), ch[c].size());
+    }
+    m.Finish();
+    return m.PeakDb();
+}
+
+struct LimitResult {
+    std::vector<std::vector<float> > out;
+    size_t latency = 0;
+    float minGain = 1;
+};
+
+LimitResult runLimiter(std::vector<std::vector<float> > in, double rate, double ceiling, double releaseMs,
+                       double lookaheadMs, size_t block)
+{
+    TruePeakLimiter lim;
+    lim.Configure(in.size(), rate, ceiling, releaseMs, lookaheadMs);
+    LimitResult r;
+    r.latency = lim.Latency();
+    for (auto& c : in) {
+        c.resize(c.size() + r.latency, 0.0f); // flush the delay line
+    }
+    const size_t n = in[0].size();
+    r.out.assign(in.size(), std::vector<float>(n));
+    for (size_t pos = 0; pos < n;) {
+        const size_t len = std::min(block, n - pos);
+        std::vector<const float*> ip;
+        std::vector<float*> op;
+        for (size_t c = 0; c < in.size(); ++c) {
+            ip.push_back(in[c].data() + pos);
+            op.push_back(r.out[c].data() + pos);
+        }
+        lim.Process(ip.data(), op.data(), len);
+        pos += len;
+        block = block * 7 % 997 + 1; // vary block sizes
+    }
+    r.minGain = lim.MinGain();
+    return r;
+}
+}
+
+TEST(TruePeak, MeterFindsTheIntersamplePeakThatSamplePeakMisses)
+{
+    const auto x = quarterRateIsp(48000);
+    float samplePeak = 0;
+    for (float v : x) {
+        samplePeak = std::max(samplePeak, std::fabs(v));
+    }
+    EXPECT_NEAR(20 * std::log10(samplePeak), 0.0, 1e-4);
+    // BS.1770-4: 4x oversampling; the peak lies exactly on an oversampled point here
+    EXPECT_NEAR(truePeakDb({ x }), 3.01, 0.02);
+    EXPECT_NEAR(truePeakDb({ x }, 32), 3.01, 0.02);
+
+    // a low-frequency sine reads its own amplitude
+    std::vector<float> s(48000);
+    for (size_t i = 0; i < s.size(); ++i) {
+        s[i] = 0.5f * float(std::sin(2 * M_PI * 997.0 * double(i) / 48000.0 + 0.3)
+                            * std::min(1.0, double(std::min(i, s.size() - i)) / 2000.0));
+    }
+    EXPECT_NEAR(truePeakDb({ s }), -6.02, 0.02);
+
+    // the interpolator's first phase is the input itself, delayed
+    TruePeakInterpolator ip(1, 4, 64);
+    for (size_t i = 0; i < 200; ++i) {
+        const float v = ip.PushAbsMax(0, s[i]);
+        if (i >= ip.Delay()) {
+            EXPECT_GE(v, std::fabs(s[i - ip.Delay()]));
+        }
+    }
+}
+
+TEST(TruePeak, LimiterOutputNeverExceedsTheCeilingOnIntersamplePeakSignals)
+{
+    std::mt19937 rng(7);
+    std::uniform_real_distribution<float> u(-1.f, 1.f);
+    struct Case {
+        std::string name;
+        std::vector<std::vector<float> > x;
+    };
+    std::vector<Case> cases;
+    for (const double rate : { 44100.0, 48000.0 }) {
+        const size_t n = size_t(rate / 2);
+        auto sine = [&](double f, double amp, double ph) {
+            std::vector<float> v(n);
+            for (size_t i = 0; i < n; ++i) {
+                v[i] = float(amp * std::sin(2 * M_PI * f * double(i) / rate + ph));
+            }
+            return v;
+        };
+        const std::string r = rate == 44100 ? "@44.1k" : "@48k";
+        cases.push_back({ "fs/4 45deg (+3 dBTP, 0 dBFS)" + r, { quarterRateIsp(n), quarterRateIsp(n, 0.8f) } });
+        cases.push_back({ "fs/4 45deg +12 dB" + r, { quarterRateIsp(n, 4.0f), quarterRateIsp(n, 4.0f) } });
+        for (const double f : { 0.40, 0.45, 0.48 }) {
+            cases.push_back({ "sine " + std::to_string(f) + "fs" + r, { sine(f * rate, 1.6, 0.3), sine(f * rate * 0.9, 0.7, 1.0) } });
+        }
+        std::vector<float> a(n), b(n), c(n), d(n);
+        for (size_t i = 0; i < n; ++i) {
+            a[i] = u(rng) > 0 ? 1.f : -1.f; // full-scale random signs: large inter-sample peaks
+            b[i] = -a[i];
+            c[i] = (i / 3) % 2 ? 1.f : -1.f;
+            d[i] = (i % 2) ? 1.f : -1.f;
+        }
+        cases.push_back({ "random +-1" + r, { a, b } });
+        cases.push_back({ "square/alternating" + r, { c, d } });
+        for (size_t i = 0; i < n; ++i) {
+            a[i] = (i % 2400 < 3) ? 4.f : 0.f; // isolated clicks, +12 dB
+            b[i] = 3.f * u(rng);               // hot noise
+            const float env = (i % 4800) < 2400 ? 2.0f : 0.1f;
+            c[i] = env * float(std::sin(2 * M_PI * 0.31 * double(i)));
+            d[i] = env * float(std::sin(2 * M_PI * 0.37 * double(i) + 1));
+        }
+        cases.push_back({ "clicks + noise" + r, { a, b } });
+        cases.push_back({ "bursts" + r, { c, d } });
+    }
+
+    int checked = 0;
+    for (const auto& cs : cases) {
+        for (const double ceiling : { -1.0, -0.1, -3.0, -6.0 }) {
+            for (const auto& [release, look] : std::vector<std::pair<double, double> > { { 100, 5 }, { 5, 1 }, { 500, 20 } }) {
+                const double rate = cs.name.find("44.1") != std::string::npos ? 44100 : 48000;
+                const auto r = runLimiter(cs.x, rate, ceiling, release, look, 333);
+                ASSERT_GT(truePeakDb(cs.x), ceiling) << cs.name;
+                // BS.1770-4 4x meter and a 32x reference both stay at or below the ceiling
+                EXPECT_LE(truePeakDb(r.out), ceiling) << cs.name << " ceiling " << ceiling << " release " << release;
+                EXPECT_LE(truePeakDb(r.out, 32), ceiling) << cs.name << " ceiling " << ceiling << " release " << release;
+                EXPECT_LT(r.minGain, 1.0f);
+                ++checked;
+            }
+        }
+    }
+    EXPECT_EQ(checked, int(cases.size()) * 12);
+}
+
+TEST(TruePeak, LimiterIsTransparentBelowTheCeilingAndDelaysByItsLatency)
+{
+    const double rate = 48000;
+    std::vector<float> x(4800);
+    for (size_t i = 0; i < x.size(); ++i) {
+        x[i] = 0.5f * float(std::sin(2 * M_PI * 1000.0 * double(i) / rate));
+    }
+    const auto r = runLimiter({ x }, rate, -1.0, 100, 5, 256);
+    EXPECT_EQ(r.latency, TruePeakLimiter::LatencyFor(rate, 5));
+    EXPECT_EQ(r.latency, size_t(240 + 31 + 8)); // lookahead + interpolator delay + peak spread
+    for (size_t i = 0; i < x.size(); ++i) {
+        ASSERT_FLOAT_EQ(r.out[0][i + r.latency], x[i]) << i;
+    }
+    for (size_t i = 0; i < r.latency; ++i) {
+        ASSERT_EQ(r.out[0][i], 0.0f);
+    }
+}
+
+TEST(TruePeak, LimiterReleasesBackToUnityGain)
+{
+    const double rate = 48000;
+    std::vector<float> x(size_t(rate), 0.1f);
+    for (size_t i = 1000; i < 1010; ++i) {
+        x[i] = 2.0f; // short burst needing -7 dB
+    }
+    for (const double release : { 20.0, 200.0 }) {
+        TruePeakLimiter lim;
+        lim.Configure(1, rate, -1.0, release, 5);
+        std::vector<float> out(x.size());
+        const float* in[1] { x.data() };
+        float* o[1] { out.data() };
+        std::vector<float> gains;
+        for (size_t i = 0; i < x.size(); ++i) {
+            const float* ii[1] { in[0] + i };
+            float* oo[1] { o[0] + i };
+            lim.Process(ii, oo, 1);
+            gains.push_back(lim.CurrentGain());
+        }
+        EXPECT_LT(lim.MinGain(), 0.5f);
+        // the gain after the burst has left recovers within a few release time constants
+        const size_t after = 1010 + lim.Latency() + size_t(5 * release * rate / 1000);
+        ASSERT_LT(after, gains.size());
+        EXPECT_GT(gains[after], 0.99f) << release;
+        // and is still reduced shortly after the peak (release is not instantaneous)
+        EXPECT_LT(gains[1010 + lim.Latency() + size_t(0.2 * release * rate / 1000)], 0.9f) << release;
+    }
+}
+
+TEST(TruePeak, EffectInstanceProcessesDestructivelyAndReportsLatency)
+{
+    au::effects::TruePeakLimiterEffect effect;
+    EffectSettings settings = effect.MakeSettings();
+    auto* s = settings.cast<au::effects::TruePeakLimiterSettings>();
+    ASSERT_TRUE(s);
+    EXPECT_DOUBLE_EQ(s->ceilingDb, -1.0);
+    EXPECT_EQ(effect.RealtimeSupport(), EffectDefinitionInterface::RealtimeSince::Always);
+    s->ceilingDb = -2.0;
+    s->lookaheadMs = 2.0;
+
+    auto inst = std::dynamic_pointer_cast<au::effects::TruePeakLimiterEffect::Instance>(effect.MakeInstance());
+    ASSERT_TRUE(inst);
+    EXPECT_EQ(inst->GetLatency(settings, 48000), TruePeakLimiter::LatencyFor(48000, 2.0));
+    EXPECT_EQ(inst->GetLatency(settings, 48000), 96u + 31u + 8u);
+
+    // destructive API: ProcessInitialize / ProcessBlock, stereo
+    ASSERT_TRUE(inst->ProcessInitialize(settings, 48000, nullptr));
+    const size_t n = 24000;
+    auto l = quarterRateIsp(n), r = quarterRateIsp(n, 0.5f);
+    const size_t lat = size_t(inst->GetLatency(settings, 48000));
+    l.resize(n + lat);
+    r.resize(n + lat);
+    std::vector<float> ol(n + lat), orr(n + lat);
+    for (size_t pos = 0; pos < n + lat; pos += 512) {
+        const size_t len = std::min<size_t>(512, n + lat - pos);
+        const float* in[2] { l.data() + pos, r.data() + pos };
+        float* out[2] { ol.data() + pos, orr.data() + pos };
+        EXPECT_EQ(inst->ProcessBlock(settings, in, out, len), len);
+    }
+    EXPECT_LE(truePeakDb({ ol, orr }), -2.0);
+    EXPECT_GT(truePeakDb({ ol, orr }), -2.3);
+
+    // realtime API, mono processor
+    EffectSettings rt = effect.MakeSettings();
+    ASSERT_TRUE(inst->RealtimeInitialize(rt, 44100, 512));
+    ASSERT_TRUE(inst->RealtimeAddProcessor(rt, nullptr, 1, 44100));
+    auto m = quarterRateIsp(22050, 2.0f);
+    std::vector<float> om(m.size());
+    for (size_t pos = 0; pos < m.size(); pos += 512) {
+        const size_t len = std::min<size_t>(512, m.size() - pos);
+        const float* in[1] { m.data() + pos };
+        float* out[1] { om.data() + pos };
+        EXPECT_EQ(inst->RealtimeProcess(0, rt, in, out, len), len);
+    }
+    EXPECT_LE(truePeakDb({ om }), -1.0);
+    EXPECT_EQ(inst->RealtimeProcess(1, rt, nullptr, nullptr, 0), 0u); // unknown group
+    EXPECT_TRUE(inst->RealtimeFinalize(rt));
+}
+
+TEST_F(Au3RecordTests, TruePeakLimiterOnMasterKeepsTheExportUnderTheCeilingWithLatencyCompensated)
+{
+    RealtimeEffectState::EffectFactory::Scope scope { &builtinFactory };
+    Au3WaveTrack* track = addSelectedMonoTrack();
+    const double rate = track->GetRate();
+    auto hot = quarterRateIsp(size_t(rate), 1.0f); // 0 dBFS samples, +3 dBTP
+    hot.insert(hot.begin(), size_t(rate / 10), 0.0f);  // starts after 0.1 s of silence
+    track->Append(0, reinterpret_cast<constSamplePtr>(hot.data()), floatSample, hot.size());
+    track->Flush();
+
+    const auto direct = renderMix(projectRef(), rate, 1.1);
+    EXPECT_GT(truePeakDb({ direct }), 2.9);
+
+    addEffect(RealtimeEffectList::Get(projectRef()), kTruePeakId);
+    const auto limited = renderMix(projectRef(), rate, 1.1);
+    ASSERT_EQ(limited.size(), direct.size());
+    EXPECT_LE(truePeakDb({ limited }), -1.0);
+    EXPECT_GT(truePeakDb({ limited }), -1.3);
+
+    // latency compensated: the audio starts at the same sample as without the limiter
+    auto firstNonZero = [](const std::vector<float>& v) {
+        for (size_t i = 0; i < v.size(); ++i) {
+            if (std::fabs(v[i]) > 1e-6f) {
+                return i;
+            }
+        }
+        return v.size();
+    };
+    EXPECT_EQ(firstNonZero(limited), firstNonZero(direct));
+    EXPECT_EQ(firstNonZero(direct), size_t(rate / 10));
+    // and in steady state it is the input scaled down to the ceiling (no distortion)
+    const size_t mid = size_t(0.6 * rate);
+    const float g = limited[mid] / direct[mid];
+    EXPECT_NEAR(20 * std::log10(g), -1.0 - 3.01 - TruePeakLimiter::SafetyMarginDb, 0.05);
+    for (size_t i = mid; i < mid + 100; ++i) {
+        EXPECT_NEAR(limited[i], direct[i] * g, 1e-4);
+    }
+}
+
+TEST(GainStaging, MeasuresPeakTruePeakRmsAndLoudness)
+{
+    const double rate = 48000;
+    std::vector<float> s(size_t(5 * rate));
+    for (size_t i = 0; i < s.size(); ++i) {
+        s[i] = 0.5f * float(std::sin(2 * M_PI * 997.0 * double(i) / rate));
+    }
+    const auto l = gst::measure({ s }, rate);
+    EXPECT_FALSE(l.silent);
+    EXPECT_EQ(l.channels, 1);
+    EXPECT_NEAR(l.peakDb, -6.02, 0.01);
+    EXPECT_NEAR(l.truePeakDb, -6.02, 0.02);
+    EXPECT_NEAR(l.rmsDb, -9.03, 0.01);
+    // BS.1770: a 997 Hz sine of RMS r on one channel reads ~ 20 log10(r) - 0.691 + K-weighting (~+0.69)
+    EXPECT_NEAR(l.lufs, -9.03, 0.3);
+
+    // the inter-sample peak signal: true peak 3 dB above the sample peak
+    const auto isp = gst::measure({ quarterRateIsp(size_t(rate)) }, rate);
+    EXPECT_NEAR(isp.peakDb, 0.0, 0.01);
+    EXPECT_NEAR(isp.truePeakDb, 3.01, 0.03);
+
+    // stereo: RMS over both channels, loudness sums the channels' power
+    const auto st = gst::measure({ s, s }, rate);
+    EXPECT_NEAR(st.rmsDb, -9.03, 0.01);
+    EXPECT_NEAR(st.lufs, l.lufs + 3.01, 0.05);
+
+    const auto silence = gst::measure({ std::vector<float>(48000, 0.0f) }, rate);
+    EXPECT_TRUE(silence.silent);
+    EXPECT_FALSE(gst::suggestTrimDb(silence, gst::TargetKind::Rms, -18).has_value());
+
+    EXPECT_NEAR(*gst::suggestTrimDb(l, gst::TargetKind::Rms, -18.0), -9.0, 0.05);
+    EXPECT_NEAR(*gst::suggestTrimDb(l, gst::TargetKind::Peak, -1.0), 5.0, 0.05);
+    EXPECT_NEAR(*gst::suggestTrimDb(l, gst::TargetKind::Lufs, -23.0), -23.0 - l.lufs, 0.06);
+    // clamped to the trim range
+    auto quiet = l;
+    quiet.rmsDb = -80;
+    EXPECT_DOUBLE_EQ(*gst::suggestTrimDb(quiet, gst::TargetKind::Rms, -18.0), gst::MaxTrimDb);
+}
+
+TEST_F(Au3RecordTests, InputTrimIsAppliedBeforeEffectsSavedAndUndoable)
+{
+    RealtimeEffectState::EffectFactory::Scope scope { &builtinFactory };
+    Au3WaveTrack* track = addSelectedMonoTrack();
+    const auto id = track->GetId();
+    const double rate = track->GetRate();
+    auto tone = monoSine(size_t(2 * rate), rate, 0.1f);
+    track->Append(0, reinterpret_cast<constSamplePtr>(tone.data()), floatSample, tone.size());
+    track->Flush();
+    auto& history = ::ProjectHistory::Get(projectRef());
+    history.InitialState();
+
+    const double before = windowDb(renderMix(projectRef(), rate, 2.0), rate, 0.5, 1.5);
+    EXPECT_DOUBLE_EQ(gst::trimDb(*track), 0.0);
+
+    // +6 dB trim: in the mix, and pushed as an undo state (as the mixer does on release)
+    EXPECT_TRUE(gst::setTrimDb(*track, 6.0));
+    EXPECT_FALSE(gst::setTrimDb(*track, 6.0));
+    history.PushState(::TranslatableString::untranslatable(wxString("Trim")),
+                      ::TranslatableString::untranslatable(wxString("Trim")));
+    EXPECT_NEAR(windowDb(renderMix(projectRef(), rate, 2.0), rate, 0.5, 1.5), before + 6.0, 0.02);
+    // the strip shows it; the fader stays where it was
+    const auto all = au::au3::mixer::strips(projectRef());
+    EXPECT_NEAR(all.at(0).trimDb, 6.0, 1e-4);
+    EXPECT_NEAR(all.at(0).volumeDb, 0.0, 1e-6);
+
+    // pre-effects: the true-peak limiter on the track sees the trimmed signal
+    auto hotTone = quarterRateIsp(size_t(rate), 0.5f); // +3 - 6 = -3 dBTP, +6 dB trim -> +3 dBTP
+    Au3WaveTrack* hot = addSelectedMonoTrack();
+    hot->Append(0, reinterpret_cast<constSamplePtr>(hotTone.data()), floatSample, hotTone.size());
+    hot->Flush();
+    track->SetMute(true);
+    gst::setTrimDb(*hot, 6.0);
+    EXPECT_NEAR(truePeakDb({ renderMix(projectRef(), rate, 1.0) }), 3.01, 0.05);
+    addEffect(RealtimeEffectList::Get(*hot), kTruePeakId);
+    EXPECT_LE(truePeakDb({ renderMix(projectRef(), rate, 1.0) }), -1.0);
+    RealtimeEffectList::Get(*hot).Clear();
+    gst::setTrimDb(*hot, 0.0);
+    track->SetMute(false);
+
+    // saved with the track, read back
+    XMLStringWriter xml;
+    DomAccessor::findWaveTrack(projectRef(), id)->WriteXML(xml);
+    EXPECT_NE(xml.find(wxT("inputtrim=\"")), wxString::npos);
+    {
+        XMLStringWriter plain;
+        hot->WriteXML(plain);
+        EXPECT_EQ(plain.find(wxT("inputtrim")), wxString::npos); // not written when unused
+    }
+    auto copy = track->Duplicate();
+    EXPECT_NEAR(gst::trimDb(static_cast<Au3WaveTrack&>(*copy)), 6.0, 1e-4);
+
+    // undo -> 0 dB, redo -> +6 dB
+    UndoManager::Get(projectRef()).Undo([&history](const UndoStackElem& elem) { history.PopState(elem.state); });
+    EXPECT_NEAR(gst::trimDb(*DomAccessor::findWaveTrack(projectRef(), id)), 0.0, 1e-6);
+    UndoManager::Get(projectRef()).Redo([&history](const UndoStackElem& elem) { history.PopState(elem.state); });
+    EXPECT_NEAR(gst::trimDb(*DomAccessor::findWaveTrack(projectRef(), id)), 6.0, 1e-4);
+}
+
+TEST_F(Au3RecordTests, GainStagingAnalyzesEveryTrackButBuses)
+{
+    Au3WaveTrack* a = addSelectedMonoTrack();
+    const double rate = a->GetRate();
+    auto tone = monoSine(size_t(3 * rate), rate, 0.5f);
+    a->Append(0, reinterpret_cast<constSamplePtr>(tone.data()), floatSample, tone.size());
+    a->Flush();
+    a->SetName(wxT("Vox"));
+    Au3WaveTrack* silent = addSelectedMonoTrack();
+    au::au3::busrouting::addBusTrack(projectRef());
+    gst::setTrimDb(*a, -3.0);
+
+    const auto levels = gst::analyze(projectRef());
+    ASSERT_EQ(levels.size(), 2u); // the bus is not analyzed
+    EXPECT_EQ(levels[0].trackId, a->GetId());
+    EXPECT_EQ(levels[0].name, "Vox");
+    EXPECT_NEAR(levels[0].peakDb, -6.02, 0.01); // measured before trim
+    EXPECT_NEAR(levels[0].rmsDb, -9.03, 0.01);
+    EXPECT_NEAR(levels[0].trimDb, -3.0, 1e-4);
+    EXPECT_GT(levels[0].lufs, -12.0);
+    EXPECT_EQ(levels[1].trackId, silent->GetId());
+    EXPECT_TRUE(levels[1].silent);
 }
 }

@@ -3,11 +3,13 @@
 #include "internal/au3/au3clipgaininteraction.h"
 #include "internal/au3/au3paramautomationinteraction.h"
 #include "internal/au3/au3busroutinginteraction.h"
+#include "internal/au3/au3gainstaginginteraction.h"
 
 #include "view/clipgainmodel.h"
 #include "view/paramautomationlanemodel.h"
 #include "view/busroutinggraphmodel.h"
 #include "view/mixerpanelmodel.h"
+#include "view/gainstagingmodel.h"
 
 #include <QtQml/qqml.h>
 
@@ -29,6 +31,7 @@ void AutomationModule::registerUiTypes()
     qmlRegisterType<ParamAutomationLaneModel>("Audacity.Automation", 1, 0, "ParamAutomationLaneModel");
     qmlRegisterType<BusRoutingGraphModel>("Audacity.Automation", 1, 0, "BusRoutingGraphModel");
     qmlRegisterType<MixerPanelModel>("Audacity.Automation", 1, 0, "MixerPanelModel");
+    qmlRegisterType<GainStagingModel>("Audacity.Automation", 1, 0, "GainStagingModel");
 }
 
 muse::modularity::IContextSetup* AutomationModule::newContext(
@@ -46,4 +49,5 @@ void AutomationContext::registerExports()
     ioc()->registerExport<IClipGainInteraction>(mname, std::make_shared<Au3ClipGainInteraction>(iocContext()));
     ioc()->registerExport<IParamAutomationInteraction>(mname, std::make_shared<Au3ParamAutomationInteraction>(iocContext()));
     ioc()->registerExport<IBusRoutingInteraction>(mname, std::make_shared<Au3BusRoutingInteraction>(iocContext()));
+    ioc()->registerExport<IGainStagingInteraction>(mname, std::make_shared<Au3GainStagingInteraction>(iocContext()));
 }

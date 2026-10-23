@@ -11,6 +11,8 @@ set( SOURCES
    Dither.h
    EBUR128.cpp
    EBUR128.h
+   TruePeak.cpp
+   TruePeak.h
    InterpolateAudio.cpp
    InterpolateAudio.h
    LinearFit.h

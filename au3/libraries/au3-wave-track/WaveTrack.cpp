@@ -227,6 +227,8 @@ struct WaveTrackData : ClientData::Cloneable<> {
     void SetVolume(float value);
     float GetPan() const;
     void SetPan(float value);
+    float GetTrim() const { return mTrim.load(std::memory_order_relaxed); }
+    void SetTrim(float value) { mTrim.store(value, std::memory_order_relaxed); }
 
     int GetRate() const;
     void SetRate(int value);
@@ -236,6 +238,8 @@ private:
     std::atomic<float> mGain{ 1.0f };
     //! Atomic because it may be read by worker threads in playback
     std::atomic<float> mPan{ 0.0f };
+    //! Input trim; atomic because it may be read by worker threads in playback
+    std::atomic<float> mTrim{ 1.0f };
 
     int mRate{ 44100 };
     double mOrigin{ 0.0 };
@@ -251,6 +255,7 @@ WaveTrackData::WaveTrackData(const WaveTrackData& other)
 {
     SetVolume(other.GetVolume());
     SetPan(other.GetPan());
+    SetTrim(other.GetTrim());
     mRate = other.mRate;
     mOrigin = other.mOrigin;
     mFormat = other.mFormat;
@@ -904,6 +909,25 @@ void WaveTrack::SetPan(float newPan)
 float WaveChannel::GetChannelVolume(int channel) const
 {
     return GetTrack().GetChannelVolume(channel);
+}
+
+float WaveChannel::GetInputTrim() const
+{
+    return GetTrack().GetInputTrim();
+}
+
+float WaveTrack::GetInputTrim() const
+{
+    return WaveTrackData::Get(*this).GetTrim();
+}
+
+void WaveTrack::SetInputTrim(float trim)
+{
+    trim = std::max(0.0f, trim);
+    if (GetInputTrim() != trim) {
+        WaveTrackData::Get(*this).SetTrim(trim);
+        Notify(true);
+    }
 }
 
 float WaveTrack::GetChannelVolume(int channel) const
@@ -2549,6 +2573,7 @@ static constexpr auto Volume_attr
     ="gain"; // https://github.com/audacity/audacity/issues/7097: keep
              // backward-compatibility with older projects.
 static constexpr auto Pan_attr = "pan";
+static constexpr auto Trim_attr = "inputtrim";
 static constexpr auto Linked_attr = "linked";
 static constexpr auto SampleFormat_attr = "sampleformat";
 static constexpr auto Channel_attr = "channel"; // write-only!
@@ -2584,6 +2609,8 @@ bool WaveTrack::HandleXMLTag(const std::string_view& tag, const AttributesList& 
             } else if (attr == Pan_attr && value.TryGet(dblValue)
                        && (dblValue >= -1.0) && (dblValue <= 1.0)) {
                 DoSetPan(dblValue);
+            } else if (attr == Trim_attr && value.TryGet(dblValue) && dblValue >= 0.0) {
+                WaveTrackData::Get(*this).SetTrim(float(dblValue));
             } else if (attr == Linked_attr && value.TryGet(nValue)) {
                 SetLinkType(ToLinkType(nValue), false);
             } else if (attr == SampleFormat_attr && value.TryGet(nValue)
@@ -2723,6 +2750,10 @@ void WaveTrack::WriteOneXML(const WaveChannel& channel, XMLWriter& xmlFile,
     xmlFile.WriteAttr(Rate_attr, useLegacy ? track.mLegacyRate : track.GetRate());
     xmlFile.WriteAttr(Volume_attr, static_cast<double>(track.GetVolume()));
     xmlFile.WriteAttr(Pan_attr, static_cast<double>(track.GetPan()));
+    if (track.GetInputTrim() != 1.0f) {
+        // only written when used, so projects without trim stay unchanged
+        xmlFile.WriteAttr(Trim_attr, static_cast<double>(track.GetInputTrim()));
+    }
     xmlFile.WriteAttr(SampleFormat_attr, static_cast<long>(useLegacy ? track.mLegacyFormat : track.GetSampleFormat()));
 
     // Other persistent data specified elsewhere;

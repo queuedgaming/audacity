@@ -71,6 +71,8 @@ set(MODULE_SRC
     ${CMAKE_CURRENT_LIST_DIR}/internal/busrouting.cpp
     ${CMAKE_CURRENT_LIST_DIR}/internal/mixerstrips.h
     ${CMAKE_CURRENT_LIST_DIR}/internal/mixerstrips.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/internal/gainstaging.h
+    ${CMAKE_CURRENT_LIST_DIR}/internal/gainstaging.cpp
     ${CMAKE_CURRENT_LIST_DIR}/internal/paramautomation.cpp
     ${CMAKE_CURRENT_LIST_DIR}/internal/paramautomation_formats.h
     )
@@ -120,6 +122,7 @@ set(MODULE_LINK
         # TODO: fix Hack and remove sqlite dependency from au3wrap - tracked in
         # https://github.com/audacity/audacity/issues/11806
         au3-mod-ffmpeg # au3wrapmodule.cpp calls FFmpegStartup()
+        au3-math # gain staging analysis (true peak, EBU R128)
         # Bulk link of all au3 libraries: no longer propagates includes/defines
         # (consumers declare their own deps), but still guarantees every enabled
         # au3 archive reaches the final link closure. Retiring it is tracked in

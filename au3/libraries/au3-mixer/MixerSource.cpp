@@ -139,10 +139,11 @@ size_t MixerSource::MixVariableRates(
                 mpSeq->GetEnvelopeValues(
                     mEnvValues.data(), getLen, (pos).as_double() / sequenceRate,
                     backwards);
+                const float trim = mpSeq->GetInputTrim();
                 for (size_t iChannel = 0; iChannel < nChannels; ++iChannel) {
                     const auto queue = mSampleQueue[iChannel].data();
                     for (decltype(getLen) i = 0; i < getLen; i++) {
-                        queue[(queueLen) + i] *= mEnvValues[i];
+                        queue[(queueLen) + i] *= mEnvValues[i] * trim;
                     }
                 }
 
@@ -265,10 +266,12 @@ size_t MixerSource::MixSameRate(unsigned nChannels, const size_t maxOut,
 
     mpSeq->GetEnvelopeValues(mEnvValues.data(), slen, t, backwards);
 
+    // input trim: pre-effects gain of the sequence
+    const float trim = mpSeq->GetInputTrim();
     for (size_t iChannel = 0; iChannel < nChannels; ++iChannel) {
         const auto pFloat = floatBuffers[iChannel];
         for (size_t i = 0; i < slen; i++) {
-            pFloat[i] *= mEnvValues[i]; // Track gain control will go here?
+            pFloat[i] *= mEnvValues[i] * trim;
         }
     }
 

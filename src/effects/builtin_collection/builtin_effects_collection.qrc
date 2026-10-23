@@ -22,6 +22,7 @@
         <file>dynamics/compressor/CompressionCurve.qml</file>
         <file>dynamics/compressor/CompressionCurvePainter.qml</file>
         <file>dynamics/limiter/LimiterView.qml</file>
+        <file>dynamics/truepeak/TruePeakLimiterView.qml</file>
         <file>dynamics/timeline/meters/DynamicsMeter.qml</file>
         <file>dynamics/timeline/ClipIndicator.qml</file>
         <file>dynamics/timeline/DynamicsPanel.qml</file>

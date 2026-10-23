@@ -9,6 +9,7 @@
 #include "effects/effects_base/ieffectviewcontroller.h"
 #include "playback/itrackplaybackcontrol.h"
 #include "automation/ibusroutinginteraction.h"
+#include "automation/igainstaginginteraction.h"
 
 namespace au::automation {
 class RealtimeEffectServiceMock : public effects::IRealtimeEffectService
@@ -73,6 +74,16 @@ public:
     MOCK_METHOD(bool, setOutput, (trackedit::TrackId, const std::string&), (override));
     MOCK_METHOD(bool, setSend, (trackedit::TrackId, const std::string&, float, bool), (override));
     MOCK_METHOD(bool, removeSend, (trackedit::TrackId, const std::string&), (override));
+    MOCK_METHOD(muse::async::Notification, changed, (), (const, override));
+};
+
+class GainStagingInteractionMock : public IGainStagingInteraction
+{
+public:
+    MOCK_METHOD(double, trimDb, (trackedit::TrackId), (const, override));
+    MOCK_METHOD(bool, setTrim, (trackedit::TrackId, double, bool), (override));
+    MOCK_METHOD(int, applyTrims, ((const std::map<trackedit::TrackId, double>&)), (override));
+    MOCK_METHOD(std::vector<TrackLevels>, analyze, (), (const, override));
     MOCK_METHOD(muse::async::Notification, changed, (), (const, override));
 };
 }

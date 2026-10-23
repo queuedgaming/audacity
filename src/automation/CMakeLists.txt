@@ -21,6 +21,11 @@ set(MODULE_SRC
     ${CMAKE_CURRENT_LIST_DIR}/view/busroutinggraphmodel.h
     ${CMAKE_CURRENT_LIST_DIR}/view/mixerpanelmodel.cpp
     ${CMAKE_CURRENT_LIST_DIR}/view/mixerpanelmodel.h
+    ${CMAKE_CURRENT_LIST_DIR}/igainstaginginteraction.h
+    ${CMAKE_CURRENT_LIST_DIR}/internal/au3/au3gainstaginginteraction.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/internal/au3/au3gainstaginginteraction.h
+    ${CMAKE_CURRENT_LIST_DIR}/view/gainstagingmodel.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/view/gainstagingmodel.h
 
     ${CMAKE_CURRENT_LIST_DIR}/internal/au3/au3clipgaininteraction.cpp
     ${CMAKE_CURRENT_LIST_DIR}/internal/au3/au3clipgaininteraction.h

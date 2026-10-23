@@ -34,6 +34,10 @@ public:
     //! may change asynchronously
     virtual float GetChannelVolume(int channel) const = 0;
 
+    //! Gain applied to the samples before any effect when mixing (input trim),
+    //! may change asynchronously
+    virtual float GetInputTrim() const { return 1.0f; }
+
     //! Retrieve samples from a sequence in floating-point format, regardless of
     //! the storage format
     /*!

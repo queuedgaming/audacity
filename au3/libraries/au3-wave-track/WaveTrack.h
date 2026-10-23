@@ -96,6 +96,7 @@ public:
 
     //! Takes volume and pan into account
     float GetChannelVolume(int channel) const override;
+    float GetInputTrim() const override;
 
     //! This fails if any clip overlapping the range has non-unit stretch ratio!
     bool DoGet(
@@ -356,6 +357,10 @@ public:
 
     //! Takes volume and pan into account
     float GetChannelVolume(int channel) const override;
+
+    //! Pre-effects gain (linear) applied when mixing; 1 by default
+    float GetInputTrim() const override;
+    void SetInputTrim(float trim);
 
     sampleCount GetVisibleSampleCount() const;
 

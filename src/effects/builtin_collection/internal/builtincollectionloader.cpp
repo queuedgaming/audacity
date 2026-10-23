@@ -39,6 +39,8 @@
 #include "dynamics/limiter/limitereffect.h"
 #include "dynamics/limiter/limiterviewmodel.h"
 #include "dynamics/limiter/limitersettingmodel.h"
+#include "dynamics/truepeak/truepeaklimitereffect.h"
+#include "dynamics/truepeak/truepeaklimiterviewmodel.h"
 #include "normalize/normalizeeffect.h"
 #include "normalize/normalizeviewmodel.h"
 #include "tonegen/chirpeffect.h"
@@ -114,6 +116,7 @@ void BuiltinCollectionLoader::preInit()
     static BuiltinEffectsModule::Registration< DtmfGenerator > regDtmf;
     static BuiltinEffectsModule::Registration< CompressorEffect > regCompressor;
     static BuiltinEffectsModule::Registration< LimiterEffect > regLimiter;
+    static BuiltinEffectsModule::Registration< TruePeakLimiterEffect > regTruePeakLimiter;
 }
 
 void BuiltinCollectionLoader::init()
@@ -156,6 +159,9 @@ void BuiltinCollectionLoader::init()
     REGISTER_AUDACITY_EFFECTS_SINGLETON_TYPE(LimiterViewModelFactory);
     REGISTER_AUDACITY_EFFECTS_SINGLETON_TYPE(LimiterSettingModelFactory);
     regView(LimiterEffect::Symbol, u"qrc:/dynamics/limiter/LimiterView.qml");
+
+    REGISTER_AUDACITY_EFFECTS_SINGLETON_TYPE(TruePeakLimiterViewModelFactory);
+    regView(TruePeakLimiterEffect::Symbol, u"qrc:/dynamics/truepeak/TruePeakLimiterView.qml");
 
     REGISTER_AUDACITY_EFFECTS_SINGLETON_TYPE(NormalizeViewModelFactory);
     regView(NormalizeEffect::Symbol, u"qrc:/normalize/NormalizeView.qml");

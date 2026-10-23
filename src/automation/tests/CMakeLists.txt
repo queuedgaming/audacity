@@ -8,6 +8,7 @@ set(MODULE_TEST_SRC
     ${CMAKE_CURRENT_LIST_DIR}/mocks/clipgaininteractionmock.h
     ${CMAKE_CURRENT_LIST_DIR}/mocks/mixermocks.h
     ${CMAKE_CURRENT_LIST_DIR}/mixerpanelmodel_tests.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/gainstagingmodel_tests.cpp
     )
 
 set(MODULE_TEST_LINK

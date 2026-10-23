@@ -69,6 +69,10 @@ set(MODULE_SRC
     ${CMAKE_CURRENT_LIST_DIR}/dynamics/limiter/limitereffect.h
     ${CMAKE_CURRENT_LIST_DIR}/dynamics/limiter/limitersettingmodel.cpp
     ${CMAKE_CURRENT_LIST_DIR}/dynamics/limiter/limitersettingmodel.h
+    ${CMAKE_CURRENT_LIST_DIR}/dynamics/truepeak/truepeaklimitereffect.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/dynamics/truepeak/truepeaklimitereffect.h
+    ${CMAKE_CURRENT_LIST_DIR}/dynamics/truepeak/truepeaklimiterviewmodel.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/dynamics/truepeak/truepeaklimiterviewmodel.h
     ${CMAKE_CURRENT_LIST_DIR}/dynamics/dynamicseffectsmacros.h
 
     ${CMAKE_CURRENT_LIST_DIR}/normalize/normalizeeffect.cpp

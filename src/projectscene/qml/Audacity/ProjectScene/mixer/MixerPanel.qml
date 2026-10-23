@@ -61,6 +61,14 @@ Item {
                 text: qsTrc("automation", "Add bus")
                 onClicked: mixer.addBus()
             }
+            FlatButton {
+                text: qsTrc("automation", "Analyze levels…")
+                onClicked: mixer.openGainStaging()
+            }
+            FlatButton {
+                text: qsTrc("automation", "Reset clips")
+                onClicked: mixer.resetClips()
+            }
             StyledTextLabel {
                 text: qsTrc("automation", "%1 strips").arg(mixer.strips.length)
             }
@@ -91,6 +99,7 @@ Item {
                         readonly property bool isMaster: modelData.kind === "master"
                         readonly property bool isBus: modelData.kind === "bus"
                         readonly property var meter: mixer.meters.length > index ? mixer.meters[index] : [-60, -60]
+                        readonly property bool clipped: mixer.clips.length > index && mixer.clips[index]
 
                         width: root.stripWidth
                         height: stripRow.height
@@ -116,6 +125,34 @@ Item {
                                     text: strip.modelData.name
                                     color: strip.isMaster || strip.isBus ? "white" : ui.theme.fontPrimaryColor
                                     font: ui.theme.bodyBoldFont
+                                }
+                            }
+
+                            // input trim (pre-inserts)
+                            RowLayout {
+                                Layout.fillWidth: true
+                                opacity: strip.isMaster ? 0.3 : 1
+                                StyledTextLabel {
+                                    text: qsTrc("automation", "Trim")
+                                }
+                                StyledSlider {
+                                    id: trimSlider
+                                    Layout.fillWidth: true
+                                    enabled: !strip.isMaster
+                                    from: -24
+                                    to: 24
+                                    stepSize: 0.1
+                                    value: strip.modelData.trimDb !== undefined ? strip.modelData.trimDb : 0
+                                    onMoved: mixer.setTrim(strip.modelData.trackId, value, false)
+                                    onPressedChanged: {
+                                        if (!pressed) {
+                                            mixer.setTrim(strip.modelData.trackId, value, true)
+                                        }
+                                    }
+                                }
+                                StyledTextLabel {
+                                    Layout.preferredWidth: 40
+                                    text: (trimSlider.value > 0.05 ? "+" : "") + trimSlider.value.toFixed(1)
                                 }
                             }
 
@@ -390,6 +427,25 @@ Item {
                                     StyledTextLabel {
                                         Layout.fillWidth: true
                                         text: root.dbText(fader.value) + " dB"
+                                    }
+                                    // clip / over indicator: latches at 0 dBFS, click to reset
+                                    Rectangle {
+                                        objectName: "clipIndicator"
+                                        Layout.preferredWidth: 44
+                                        Layout.preferredHeight: 16
+                                        radius: 2
+                                        color: strip.clipped ? "#e03030" : "#3a2a2a"
+                                        border.color: strip.clipped ? "#ff8080" : ui.theme.strokeColor
+                                        StyledTextLabel {
+                                            anchors.centerIn: parent
+                                            text: qsTrc("automation", "CLIP")
+                                            color: strip.clipped ? "white" : "#806060"
+                                            font: ui.theme.bodyBoldFont
+                                        }
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            onClicked: mixer.resetClip(strip.modelData.trackId)
+                                        }
                                     }
                                     StyledTextLabel {
                                         Layout.fillWidth: true

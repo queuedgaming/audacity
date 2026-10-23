@@ -12,6 +12,7 @@
 #include "au3-realtime-effects/RealtimeEffectState.h"
 
 #include "busrouting.h"
+#include "gainstaging.h"
 
 namespace au::au3::mixer {
 namespace {
@@ -46,6 +47,7 @@ std::vector<Strip> strips(AudacityProject& project)
         const double vol = wt->GetVolume();
         s.volumeDb = vol > 0 ? 20.0 * std::log10(vol) : -60.0;
         s.pan = wt->GetPan();
+        s.trimDb = gainstaging::trimDb(*wt);
         s.mute = wt->GetMute();
         s.solo = wt->GetSolo();
         s.channels = static_cast<int>(wt->NChannels());

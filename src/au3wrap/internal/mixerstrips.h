@@ -36,6 +36,7 @@ struct Strip {
     std::string outputBusId; //!< empty: master (unused for the master strip)
     std::vector<StripSend> sends;
     double volumeDb = 0.0;  //!< tracks and buses; the master fader is the playback volume
+    double trimDb = 0.0;    //!< input trim (pre-inserts), tracks and buses
     float pan = 0.0f;
     bool mute = false;
     bool solo = false;

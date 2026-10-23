@@ -27,11 +27,13 @@ protected:
         m_view = std::make_shared<NiceMock<EffectViewControllerMock> >();
         m_ctrl = std::make_shared<NiceMock<TrackPlaybackControlMock> >();
         m_routing = std::make_shared<NiceMock<BusRoutingInteractionMock> >();
+        m_gain = std::make_shared<NiceMock<GainStagingInteractionMock> >();
         m_model = std::make_unique<MixerPanelModel>();
         m_model->realtimeEffectService.set(m_fx);
         m_model->effectViewController.set(m_view);
         m_model->trackPlaybackControl.set(m_ctrl);
         m_model->routing.set(m_routing);
+        m_model->gainStaging.set(m_gain);
         m_model->globalContext.set(std::make_shared<NiceMock<context::GlobalContextMock> >());
         m_model->projectHistory.set(std::make_shared<NiceMock<trackedit::ProjectHistoryMock> >());
         m_model->playback.set(std::make_shared<NiceMock<playback::PlaybackMock> >());
@@ -85,7 +87,10 @@ protected:
     std::shared_ptr<NiceMock<EffectViewControllerMock> > m_view;
     std::shared_ptr<NiceMock<TrackPlaybackControlMock> > m_ctrl;
     std::shared_ptr<NiceMock<BusRoutingInteractionMock> > m_routing;
+    std::shared_ptr<NiceMock<GainStagingInteractionMock> > m_gain;
     std::unique_ptr<MixerPanelModel> m_model;
+
+    void level(long long id, int channel, float db) { m_model->onLevel(id, channel, db); }
     std::vector<mx::Strip> m_strips;
 };
 }
@@ -200,4 +205,44 @@ TEST_F(MixerPanelModelTest, FaderPanMuteSoloAndRoutingGoThroughTheExistingServic
     EXPECT_TRUE(m_model->setSend(1, "bus1", 0.5, true));
     EXPECT_CALL(*m_routing, removeSend(1, std::string("bus1"))).WillOnce(Return(false));
     EXPECT_FALSE(m_model->removeSend(1, "bus1"));
+}
+
+TEST_F(MixerPanelModelTest, InputTrimGoesThroughGainStagingAndClipIndicatorsLatch)
+{
+    auto t = track(1, "Vox");
+    t.trimDb = -4.5;
+    m_strips = { t, track(2, "Gtr"), master() };
+    m_model->reload();
+    EXPECT_DOUBLE_EQ(strip(0).value("trimDb").toDouble(), -4.5);
+
+    // dragging, then release (one undo step is pushed by the service on completed)
+    EXPECT_CALL(*m_gain, setTrim(1, DoubleEq(3.0), false)).WillOnce(Return(true));
+    EXPECT_CALL(*m_gain, setTrim(1, DoubleEq(3.5), true)).WillOnce(Return(true));
+    m_model->setTrim(1, 3.0, false);
+    m_model->setTrim(1, 3.5, true);
+    // the master strip has no trim
+    EXPECT_CALL(*m_gain, setTrim(mx::Strip::MasterId, _, _)).Times(0);
+    m_model->setTrim(mx::Strip::MasterId, 1.0, true);
+
+    auto clips = [this] {
+        QList<bool> out;
+        for (const auto& v : m_model->clips()) {
+            out << v.toBool();
+        }
+        return out;
+    };
+    EXPECT_EQ(clips(), (QList<bool> { false, false, false }));
+    level(2, 0, -0.5f); // hot but not over
+    EXPECT_EQ(clips(), (QList<bool> { false, false, false }));
+    level(2, 1, 0.0f); // reached 0 dBFS on the right channel
+    level(mx::Strip::MasterId, 0, 1.2f);
+    EXPECT_EQ(clips(), (QList<bool> { false, true, true }));
+    level(2, 1, -20.0f); // latched until reset
+    EXPECT_EQ(clips(), (QList<bool> { false, true, true }));
+    // the meter itself follows the level
+    EXPECT_DOUBLE_EQ(m_model->meters().at(1).toList().at(1).toDouble(), -20.0);
+    m_model->resetClip(2);
+    EXPECT_EQ(clips(), (QList<bool> { false, false, true }));
+    m_model->resetClips();
+    EXPECT_EQ(clips(), (QList<bool> { false, false, false }));
 }

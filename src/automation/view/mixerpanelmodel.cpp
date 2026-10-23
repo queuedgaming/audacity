@@ -55,6 +55,9 @@ void MixerPanelModel::init()
     if (routing()) {
         routing()->changed().onNotify(this, [this]() { scheduleReload(); });
     }
+    if (gainStaging()) {
+        gainStaging()->changed().onNotify(this, [this]() { scheduleReload(); });
+    }
     if (trackPlaybackControl()) {
         trackPlaybackControl()->muteOrSoloChanged().onReceive(this, [this](long) { scheduleReload(); });
     }
@@ -145,6 +148,7 @@ void MixerPanelModel::reload()
         m["volumeDb"] = s.kind == mx::StripKind::Master && playback() && playback()->audioOutput()
                         ? double(playback()->audioOutput()->playbackVolume()) : s.volumeDb;
         m["pan"] = double(s.pan);
+        m["trimDb"] = s.trimDb;
         m["mute"] = s.mute;
         m["solo"] = s.solo;
         m["channels"] = s.channels;
@@ -199,6 +203,7 @@ void MixerPanelModel::reload()
     subscribeMeters();
     emit stripsChanged();
     emit metersChanged();
+    emit clipsChanged();
 }
 
 void MixerPanelModel::subscribeMeters()
@@ -213,16 +218,64 @@ void MixerPanelModel::subscribeMeters()
         }
         m_levels[id] = {};
         auto onSignal = [this, id](audio::audioch_t ch, const audio::MeterSignal& sig) {
-            auto& lvl = m_levels[id];
-            const float v = std::max(FLOOR_DB, sig.peak.pressure);
-            (ch == 0 ? lvl.l : lvl.r) = v;
-            lvl.at = QDateTime::currentMSecsSinceEpoch();
-            m_metersDirty = true;
+            onLevel(id, int(ch), sig.peak.pressure);
         };
         if (id == mx::Strip::MasterId) {
             out->playbackSignalChanges().onReceive(this, onSignal);
         } else {
             out->playbackTrackSignalChanges(id).onReceive(this, onSignal);
+        }
+    }
+}
+
+void MixerPanelModel::onLevel(long long id, int channel, float db)
+{
+    auto& lvl = m_levels[id];
+    const float v = std::max(FLOOR_DB, db);
+    (channel == 0 ? lvl.l : lvl.r) = v;
+    lvl.at = QDateTime::currentMSecsSinceEpoch();
+    m_metersDirty = true;
+    if (db >= CLIP_DB && !m_clipped[id]) {
+        m_clipped[id] = true;
+        emit clipsChanged();
+    }
+}
+
+QVariantList MixerPanelModel::clips() const
+{
+    QVariantList list;
+    for (const long long id : m_ids) {
+        const auto it = m_clipped.find(id);
+        list << (it != m_clipped.end() && it->second);
+    }
+    return list;
+}
+
+void MixerPanelModel::resetClip(qlonglong trackId)
+{
+    m_clipped[trackId] = false;
+    emit clipsChanged();
+}
+
+void MixerPanelModel::resetClips()
+{
+    m_clipped.clear();
+    emit clipsChanged();
+}
+
+void MixerPanelModel::openGainStaging()
+{
+    if (interactive()) {
+        interactive()->open("audacity://projectscene/gainstaging");
+    }
+}
+
+void MixerPanelModel::setTrim(qlonglong trackId, double db, bool completed)
+{
+    if (trackId != mx::Strip::MasterId && gainStaging()) {
+        gainStaging()->setTrim(trackId, db, completed);
+        if (completed) {
+            scheduleReload();
         }
     }
 }

@@ -13,6 +13,7 @@
 #include "framework/global/async/asyncable.h"
 #include "framework/global/modularity/ioc.h"
 #include "context/iglobalcontext.h"
+#include "framework/interactive/iinteractive.h"
 #include "trackedit/iprojecthistory.h"
 #include "playback/iplayback.h"
 #include "playback/itrackplaybackcontrol.h"
@@ -21,6 +22,7 @@
 #include "au3wrap/internal/mixerstrips.h"
 
 #include "automation/ibusroutinginteraction.h"
+#include "automation/igainstaginginteraction.h"
 
 namespace au::automation {
 //! Model of the channel-strip mixer: one strip per wave track and bus, plus master.
@@ -32,6 +34,8 @@ class MixerPanelModel : public QObject, public muse::async::Asyncable, public mu
 
     Q_PROPERTY(QVariantList strips READ strips NOTIFY stripsChanged FINAL)
     Q_PROPERTY(QVariantList meters READ meters NOTIFY metersChanged FINAL)
+    //! Per strip (same order as strips): true once its level reached 0 dBFS, until reset
+    Q_PROPERTY(QVariantList clips READ clips NOTIFY clipsChanged FINAL)
 
     muse::ContextInject<context::IGlobalContext> globalContext{ this };
     muse::ContextInject<trackedit::IProjectHistory> projectHistory{ this };
@@ -40,6 +44,8 @@ class MixerPanelModel : public QObject, public muse::async::Asyncable, public mu
     muse::ContextInject<effects::IRealtimeEffectService> realtimeEffectService{ this };
     muse::ContextInject<IBusRoutingInteraction> routing{ this };
     muse::ContextInject<effects::IEffectViewController> effectViewController{ this };
+    muse::ContextInject<IGainStagingInteraction> gainStaging{ this };
+    muse::ContextInject<muse::IInteractive> interactive{ this };
 
     friend class MixerPanelModelTest;
 
@@ -53,12 +59,22 @@ public:
     QVariantList strips() const { return m_strips; }
     //! [leftDb, rightDb] per strip, same order as strips
     QVariantList meters() const;
+    QVariantList clips() const;
+
+    //! Level (dBFS) at or above which a strip shows its clip indicator
+    static constexpr float CLIP_DB = -0.01f;
 
     Q_INVOKABLE void init();
     Q_INVOKABLE void reload();
 
     Q_INVOKABLE void setVolume(qlonglong trackId, double db, bool completed);
     Q_INVOKABLE void setPan(qlonglong trackId, double pan, bool completed);
+    //! Input trim (pre-inserts), tracks and buses; saved and undoable
+    Q_INVOKABLE void setTrim(qlonglong trackId, double db, bool completed);
+    Q_INVOKABLE void resetClip(qlonglong trackId);
+    Q_INVOKABLE void resetClips();
+    //! Opens the gain staging (level analysis) dialog
+    Q_INVOKABLE void openGainStaging();
     Q_INVOKABLE void setMute(qlonglong trackId, bool mute);
     Q_INVOKABLE void setSolo(qlonglong trackId, bool solo);
     Q_INVOKABLE bool setOutput(qlonglong trackId, const QString& busId);
@@ -76,6 +92,7 @@ public:
 signals:
     void stripsChanged();
     void metersChanged();
+    void clipsChanged();
 
 private:
     void subscribeMeters();
@@ -95,6 +112,9 @@ private:
         qint64 at = 0;
     };
     std::map<long long, Level> m_levels;
+    std::map<long long, bool> m_clipped;
+    //! Records a level reading of a strip (also latches its clip indicator)
+    void onLevel(long long id, int channel, float db);
     bool m_metersDirty = false;
     QTimer m_meterTimer;
     bool m_reloadPending = false;
