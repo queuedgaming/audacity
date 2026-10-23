@@ -84,6 +84,11 @@ public:
 
     //! Smallest gain applied so far (linear), for reporting gain reduction
     float MinGain() const { return mMinGain; }
+    //! Smallest gain applied during the last Process() call (linear)
+    float BlockMinGain() const { return mBlockMinGain; }
+    //! Approximate true peak (linear) of the output of the last Process() call:
+    //! 4x oversampling with a short (16 taps per phase) interpolator, for metering only
+    float BlockOutputPeak() const { return mBlockOutPeak; }
     float CurrentGain() const { return mGain; }
 
 private:
@@ -113,4 +118,35 @@ private:
     size_t mDelayPos = 0;
     float mGain = 1.0f;
     float mMinGain = 1.0f;
+    float mBlockMinGain = 1.0f;
+    float mBlockOutPeak = 0.0f;
+    TruePeakInterpolator mOutMeter { 1, 4, 16 };
+};
+
+#include <atomic>
+
+//! Gain-reduction / output-level readings published by a limiter on the audio thread and
+//! polled by the UI. Lock-free and allocation-free on both sides.
+struct MATH_API LimiterMeterState
+{
+    //! Called from the audio thread once per processed block
+    void Publish(float blockMinGain, float blockOutPeak) noexcept;
+    //! Called from the UI: clears the held maxima (applied on the next publish)
+    void RequestReset() noexcept { resetRequested.store(true, std::memory_order_relaxed); }
+
+    float CurrentGrDb() const noexcept { return currentGrDb.load(std::memory_order_relaxed); }
+    float MaxGrDb() const noexcept { return maxGrDb.load(std::memory_order_relaxed); }
+    float OutputPeakDb() const noexcept { return outPeakDb.load(std::memory_order_relaxed); }
+    float MaxOutputPeakDb() const noexcept { return maxOutPeakDb.load(std::memory_order_relaxed); }
+    //! Incremented on every publish, so the UI can tell whether audio is flowing
+    unsigned Updates() const noexcept { return updates.load(std::memory_order_relaxed); }
+
+    static constexpr float FloorDb = -120.0f;
+
+    std::atomic<float> currentGrDb { 0.0f }; //!< >= 0: dB of reduction in the last block
+    std::atomic<float> maxGrDb { 0.0f };     //!< held since the last reset
+    std::atomic<float> outPeakDb { FloorDb };
+    std::atomic<float> maxOutPeakDb { FloorDb };
+    std::atomic<unsigned> updates { 0 };
+    std::atomic<bool> resetRequested { false };
 };

@@ -2702,7 +2702,7 @@ class TestPluginSettings final : public audacity::BasicSettings
 
     bool DoWrite(const wxString& key, DataType value)
     {
-        mStorage[key] = std::move(value);
+        mStorage[MakePath(key)] = std::move(value);
         return true;
     }
 
@@ -2710,7 +2710,7 @@ protected:
 
     void DoBeginGroup(const wxString& prefix) override
     {
-        mGroupStack.push_back(prefix);
+        mGroupStack.push_back(MakePath(prefix));
     }
 
     void DoEndGroup() noexcept override
@@ -2720,7 +2720,13 @@ protected:
 
     bool HasGroup(const wxString& key) const override
     {
-        return true;
+        const wxString g = MakePath(key) + "/";
+        for (const auto& kv : mStorage) {
+            if (kv.first.StartsWith(g)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     bool HasEntry(const wxString& key) const override
@@ -2740,7 +2746,19 @@ protected:
 
     wxArrayString GetChildGroups() const override
     {
-        return { };
+        const wxString g = mGroupStack.back() == "/" ? wxString("/") : mGroupStack.back() + "/";
+        wxArrayString out;
+        for (const auto& kv : mStorage) {
+            if (!kv.first.StartsWith(g)) {
+                continue;
+            }
+            const wxString rest = kv.first.Mid(g.length());
+            const int slash = rest.Find('/');
+            if (slash > 0 && out.Index(rest.Left(slash)) == wxNOT_FOUND) {
+                out.Add(rest.Left(slash));
+            }
+        }
+        return out;
     }
 
     wxArrayString GetChildKeys() const override
@@ -2750,20 +2768,19 @@ protected:
 
     bool Remove(const wxString& key) override
     {
-        if (key.empty()) {
-            for (auto it = mStorage.begin(); it != mStorage.end(); ++it) {
-                if (it->first.StartsWith(key)) {
-                    it = mStorage.erase(it);
-                }
-            }
-        } else {
-            auto it = mStorage.find(MakePath(key));
-            if (it != mStorage.end()) {
-                mStorage.erase(it);
-                return true;
+        // removes the entry `key` or the whole group `key`
+        const wxString path = MakePath(key);
+        const wxString g = path == "/" ? path : path + "/";
+        bool removed = false;
+        for (auto it = mStorage.begin(); it != mStorage.end();) {
+            if (it->first == path || it->first.StartsWith(g)) {
+                it = mStorage.erase(it);
+                removed = true;
+            } else {
+                ++it;
             }
         }
-        return false;
+        return removed;
     }
 
     void Clear() override
@@ -2790,7 +2807,12 @@ private:
 
     wxString MakePath(const wxString& key) const
     {
-        return mGroupStack.back() + "/" + key;
+        wxString p = key.StartsWith("/") ? key : mGroupStack.back() + "/" + key;
+        while (p.Replace("//", "/")) {}
+        if (p.length() > 1 && p.EndsWith("/")) {
+            p.RemoveLast();
+        }
+        return p;
     }
 
     std::unordered_map<wxString, DataType> mStorage;
@@ -3583,6 +3605,7 @@ TEST_F(Au3RecordTests, MixerStripEditsAreSavedAndUndoable)
 
 // ---- true-peak limiter and gain staging ---------------------------------------------------
 #include "au3-math/TruePeak.h"
+#include "au3-effects/EffectManager.h"
 #include "au3wrap/internal/gainstaging.h"
 #include <random>
 
@@ -3844,6 +3867,125 @@ TEST(TruePeak, EffectInstanceProcessesDestructivelyAndReportsLatency)
     EXPECT_LE(truePeakDb({ om }), -1.0);
     EXPECT_EQ(inst->RealtimeProcess(1, rt, nullptr, nullptr, 0), 0u); // unknown group
     EXPECT_TRUE(inst->RealtimeFinalize(rt));
+}
+
+TEST(TruePeak, LimiterPublishesGainReductionAndOutputTruePeakToTheSharedMeter)
+{
+    au::effects::TruePeakLimiterEffect effect;
+    EffectSettings settings = effect.MakeSettings();
+    auto* s = settings.cast<au::effects::TruePeakLimiterSettings>();
+    ASSERT_TRUE(s && s->meter);
+    s->ceilingDb = -2.0;
+    // a copy (as made for preview / the realtime worker) shares the meter the UI reads
+    EffectSettings copy = settings;
+    auto meter = copy.cast<au::effects::TruePeakLimiterSettings>()->meter;
+    EXPECT_EQ(meter, s->meter);
+    EXPECT_TRUE(*copy.cast<au::effects::TruePeakLimiterSettings>() == *s);
+    EXPECT_EQ(meter->Updates(), 0u);
+
+    auto inst = std::dynamic_pointer_cast<au::effects::TruePeakLimiterEffect::Instance>(effect.MakeInstance());
+    ASSERT_TRUE(inst->ProcessInitialize(copy, 48000, nullptr));
+    auto run = [&](std::vector<float> x) {
+        std::vector<float> y(x.size());
+        for (size_t pos = 0; pos < x.size(); pos += 512) {
+            const size_t len = std::min<size_t>(512, x.size() - pos);
+            const float* in[2] { x.data() + pos, x.data() + pos };
+            float* out[2] { y.data() + pos, y.data() + pos };
+            inst->ProcessBlock(copy, in, out, len);
+        }
+    };
+    // +3.01 dBTP into a -2 dBTP ceiling: ~5 dB of reduction, output at the ceiling
+    run(quarterRateIsp(24000));
+    EXPECT_EQ(meter->Updates(), (24000u + 511u) / 512u);
+    EXPECT_NEAR(meter->CurrentGrDb(), 5.1, 0.3);
+    EXPECT_NEAR(meter->MaxGrDb(), 5.1, 0.3);
+    EXPECT_LE(meter->OutputPeakDb(), -1.9); // short meter interpolator: within 0.1 dB
+    EXPECT_GT(meter->OutputPeakDb(), -2.4);
+
+    // quiet signal: current reduction goes back to 0 after release, max is held
+    run(quarterRateIsp(48000, 0.1f));
+    EXPECT_NEAR(meter->CurrentGrDb(), 0.0, 0.01);
+    EXPECT_NEAR(meter->MaxGrDb(), 5.1, 0.3);
+    EXPECT_NEAR(meter->OutputPeakDb(), 20 * std::log10(0.1) + 3.01, 0.2);
+
+    // reset from the UI side is applied by the next publish
+    meter->RequestReset();
+    EXPECT_GT(meter->MaxGrDb(), 5.0);
+    run(quarterRateIsp(512, 0.1f));
+    EXPECT_NEAR(meter->MaxGrDb(), 0.0, 0.01);
+    EXPECT_LT(meter->MaxOutputPeakDb(), -15.0);
+}
+
+TEST(TruePeak, FactoryPresetsLoadTheirValuesAndKeepTheMeter)
+{
+    au::effects::TruePeakLimiterEffect effect;
+    const auto names = effect.GetFactoryPresets();
+    ASSERT_EQ(names.size(), 5u);
+    EXPECT_EQ(names[0], wxString("Streaming (-1 dBTP)"));
+    const auto& presets = au::effects::TruePeakLimiterFactoryPresets();
+    EffectSettings settings = effect.MakeSettings();
+    auto* s = settings.cast<au::effects::TruePeakLimiterSettings>();
+    const auto meter = s->meter;
+    for (size_t i = 0; i < presets.size(); ++i) {
+        ASSERT_TRUE(effect.LoadFactoryPreset(int(i), settings).has_value()) << i;
+        EXPECT_DOUBLE_EQ(s->ceilingDb, presets[i].ceilingDb);
+        EXPECT_DOUBLE_EQ(s->releaseMs, presets[i].releaseMs);
+        EXPECT_DOUBLE_EQ(s->lookaheadMs, presets[i].lookaheadMs);
+        EXPECT_EQ(s->meter, meter);
+        EXPECT_GE(s->ceilingDb, effect.ceilingDb.min);
+        EXPECT_LE(s->ceilingDb, effect.ceilingDb.max);
+        EXPECT_GE(s->releaseMs, effect.releaseMs.min);
+        EXPECT_LE(s->releaseMs, effect.releaseMs.max);
+    }
+    EXPECT_DOUBLE_EQ(presets[2].ceilingDb, -0.3);
+    EXPECT_DOUBLE_EQ(presets[3].ceilingDb, -1.5);
+    EXPECT_GT(presets[3].releaseMs, presets[0].releaseMs);
+    EXPECT_LT(presets[4].releaseMs, presets[0].releaseMs);
+    EXPECT_FALSE(effect.LoadFactoryPreset(5, settings).has_value());
+    EXPECT_FALSE(effect.LoadFactoryPreset(-1, settings).has_value());
+}
+
+TEST(TruePeak, UserPresetsSaveLoadAndDeleteRoundTrip)
+{
+    // the same calls EffectPresetsProvider makes for save / apply / delete
+    au::effects::TruePeakLimiterEffect effect;
+    registerWithPluginManager(effect);
+    const PluginID id = PluginManager::GetID(&effect);
+
+    EffectSettings settings = effect.MakeSettings();
+    auto* s = settings.cast<au::effects::TruePeakLimiterSettings>();
+    s->ceilingDb = -3.7;
+    s->releaseMs = 321;
+    s->lookaheadMs = 12.5;
+    ASSERT_TRUE(effect.SaveUserPreset(UserPresetsGroup(wxT("My master")), settings));
+    s->ceilingDb = -0.5;
+    ASSERT_TRUE(effect.SaveUserPreset(UserPresetsGroup(wxT("Another")), settings));
+
+    auto list = GetUserPresets(effect);
+    ASSERT_EQ(list.size(), 2u);
+    EXPECT_EQ(list[0], wxString("Another"));
+    EXPECT_EQ(list[1], wxString("My master"));
+
+    EffectSettings loaded = effect.MakeSettings();
+    auto* l = loaded.cast<au::effects::TruePeakLimiterSettings>();
+    const auto meter = l->meter;
+    ASSERT_TRUE(effect.LoadUserPreset(UserPresetsGroup(wxT("My master")), loaded).has_value());
+    EXPECT_DOUBLE_EQ(l->ceilingDb, -3.7);
+    EXPECT_DOUBLE_EQ(l->releaseMs, 321);
+    EXPECT_DOUBLE_EQ(l->lookaheadMs, 12.5);
+    EXPECT_EQ(l->meter, meter);
+
+    EXPECT_TRUE(PluginManager::Get().RemoveConfigSubgroup(PluginSettings::Private, id,
+                                                          UserPresetsGroup(wxT("My master"))));
+    list = GetUserPresets(effect);
+    ASSERT_EQ(list.size(), 1u);
+    EXPECT_EQ(list[0], wxString("Another"));
+    EXPECT_FALSE(effect.LoadUserPreset(UserPresetsGroup(wxT("My master")), loaded).has_value());
+    ASSERT_TRUE(effect.LoadUserPreset(UserPresetsGroup(wxT("Another")), loaded).has_value());
+    EXPECT_DOUBLE_EQ(l->ceilingDb, -0.5);
+    EXPECT_TRUE(PluginManager::Get().RemoveConfigSubgroup(PluginSettings::Private, id,
+                                                          UserPresetsGroup(wxT("Another"))));
+    EXPECT_TRUE(GetUserPresets(effect).empty());
 }
 
 TEST_F(Au3RecordTests, TruePeakLimiterOnMasterKeepsTheExportUnderTheCeilingWithLatencyCompensated)

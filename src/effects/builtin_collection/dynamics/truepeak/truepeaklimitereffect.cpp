@@ -14,6 +14,41 @@ bool operator==(const TruePeakLimiterSettings& a, const TruePeakLimiterSettings&
     return a.ceilingDb == b.ceilingDb && a.releaseMs == b.releaseMs && a.lookaheadMs == b.lookaheadMs;
 }
 
+const std::vector<TruePeakLimiterPreset>& TruePeakLimiterFactoryPresets()
+{
+    static const std::vector<TruePeakLimiterPreset> presets {
+        { "Streaming (-1 dBTP)", -1.0, 100.0, 5.0 },
+        { "Broadcast EBU R128 (-1 dBTP)", -1.0, 150.0, 5.0 },
+        { "CD / Transparent (-0.3 dBTP)", -0.3, 200.0, 8.0 },
+        { "Podcast (-1.5 dBTP, slow release)", -1.5, 400.0, 5.0 },
+        { "Aggressive loud (fast release)", -0.5, 20.0, 2.0 },
+    };
+    return presets;
+}
+
+RegistryPaths TruePeakLimiterEffect::GetFactoryPresets() const
+{
+    RegistryPaths paths;
+    for (const auto& p : TruePeakLimiterFactoryPresets()) {
+        paths.push_back(RegistryPath { p.name });
+    }
+    return paths;
+}
+
+OptionalMessage TruePeakLimiterEffect::LoadFactoryPreset(int id, EffectSettings& settings) const
+{
+    const auto& presets = TruePeakLimiterFactoryPresets();
+    if (id < 0 || static_cast<size_t>(id) >= presets.size()) {
+        return {};
+    }
+    // assign fields only, keeping the shared meter
+    auto& s = GetSettings(settings);
+    s.ceilingDb = presets[id].ceilingDb;
+    s.releaseMs = presets[id].releaseMs;
+    s.lookaheadMs = presets[id].lookaheadMs;
+    return { nullptr };
+}
+
 const ComponentInterfaceSymbol TruePeakLimiterEffect::Symbol { TranslatableString("effects-dynamics", "True Peak Limiter") };
 
 const EffectParameterMethods& TruePeakLimiterEffect::Parameters() const
@@ -87,6 +122,9 @@ size_t TruePeakLimiterEffect::Instance::Run(Processor& p, const TruePeakLimiterS
         p.limiter.SetParameters(s.ceilingDb, s.releaseMs);
     }
     p.limiter.Process(in, out, len);
+    if (s.meter) {
+        s.meter->Publish(p.limiter.BlockMinGain(), p.limiter.BlockOutputPeak());
+    }
     return len;
 }
 

@@ -3,6 +3,7 @@
  */
 #pragma once
 
+#include <memory>
 #include <vector>
 
 #include "au3-effects/PerTrackEffect.h"
@@ -19,7 +20,20 @@ struct TruePeakLimiterSettings {
     double ceilingDb { ceilingDbDefault };
     double releaseMs { releaseMsDefault };
     double lookaheadMs { lookaheadMsDefault };
+
+    //! Metering published by the processing instance(s), read by the UI. Not a parameter:
+    //! ignored by comparison and serialization; copies of the settings share it (no allocation
+    //! when settings are copied, only when they are default-constructed on the main thread).
+    std::shared_ptr<LimiterMeterState> meter { std::make_shared<LimiterMeterState>() };
 };
+
+struct TruePeakLimiterPreset {
+    const char* name;
+    double ceilingDb;
+    double releaseMs;
+    double lookaheadMs;
+};
+const std::vector<TruePeakLimiterPreset>& TruePeakLimiterFactoryPresets();
 
 bool operator==(const TruePeakLimiterSettings& a, const TruePeakLimiterSettings& b);
 
@@ -44,6 +58,8 @@ public:
     std::shared_ptr<::EffectInstance> MakeInstance() const override;
     bool CheckWhetherSkipEffect(const EffectSettings& settings) const override;
     const EffectParameterMethods& Parameters() const override;
+    RegistryPaths GetFactoryPresets() const override;
+    OptionalMessage LoadFactoryPreset(int id, EffectSettings& settings) const override;
 
 #define TRUEPEAK_PARAM(paramName, paramMin, paramDefault, paramMax, paramStep) \
     DYNAMICS_EFFECT_PARAM(TruePeakLimiterSettings, paramName, paramMin, paramDefault, paramMax, paramStep)

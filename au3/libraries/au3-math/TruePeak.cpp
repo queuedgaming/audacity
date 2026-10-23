@@ -143,6 +143,7 @@ void TruePeakLimiter::Configure(size_t channels, double sampleRate, double ceili
     mBox.assign(mLookahead, 1.0f);
     mSpread.assign(2 * PeakSpread, 0.0f);
     mDelay.assign(mChannels, std::vector<float>(Latency(), 0.0f));
+    mOutMeter = TruePeakInterpolator(mChannels, 4, 16);
     SetParameters(ceilingDb, releaseMs);
     Reset();
 }
@@ -171,6 +172,9 @@ void TruePeakLimiter::Reset()
     mDelayPos = 0;
     mGain = 1.0f;
     mMinGain = 1.0f;
+    mBlockMinGain = 1.0f;
+    mBlockOutPeak = 0.0f;
+    mOutMeter.Reset();
 }
 
 float TruePeakLimiter::NextGain(float e)
@@ -227,6 +231,8 @@ float TruePeakLimiter::NextGain(float e)
 void TruePeakLimiter::Process(const float* const* in, float* const* out, size_t len)
 {
     const size_t delayLen = mDelay.empty() ? 0 : mDelay[0].size();
+    float blockMin = 1.0f;
+    float outPeak = 0.0f;
     for (size_t i = 0; i < len; ++i) {
         float e = 0.0f;
         for (size_t c = 0; c < mChannels; ++c) {
@@ -235,12 +241,39 @@ void TruePeakLimiter::Process(const float* const* in, float* const* out, size_t 
         const float g = NextGain(e);
         mGain = g;
         mMinGain = std::min(mMinGain, g);
+        blockMin = std::min(blockMin, g);
         for (size_t c = 0; c < mChannels; ++c) {
             auto& d = mDelay[c];
             const float delayed = d[mDelayPos];
             d[mDelayPos] = in[c][i];
-            out[c][i] = delayed * g;
+            const float y = delayed * g;
+            out[c][i] = y;
+            outPeak = std::max(outPeak, mOutMeter.PushAbsMax(c, y));
         }
         mDelayPos = delayLen ? (mDelayPos + 1) % delayLen : 0;
     }
+    mBlockMinGain = blockMin;
+    mBlockOutPeak = outPeak;
+}
+
+namespace {
+float linToDb(float v, float floorDb)
+{
+    return v > 0.0f ? std::max(floorDb, 20.0f * std::log10(v)) : floorDb;
+}
+}
+
+void LimiterMeterState::Publish(float blockMinGain, float blockOutPeak) noexcept
+{
+    const float gr = std::max(0.0f, -linToDb(blockMinGain, FloorDb));
+    const float out = linToDb(blockOutPeak, FloorDb);
+    const bool reset = resetRequested.exchange(false, std::memory_order_relaxed);
+    currentGrDb.store(gr, std::memory_order_relaxed);
+    outPeakDb.store(out, std::memory_order_relaxed);
+    // only the audio thread writes the maxima, so load/store is race-free
+    const float prevGr = reset ? 0.0f : maxGrDb.load(std::memory_order_relaxed);
+    maxGrDb.store(std::max(prevGr, gr), std::memory_order_relaxed);
+    const float prevOut = reset ? FloorDb : maxOutPeakDb.load(std::memory_order_relaxed);
+    maxOutPeakDb.store(std::max(prevOut, out), std::memory_order_relaxed);
+    updates.fetch_add(1, std::memory_order_relaxed);
 }
