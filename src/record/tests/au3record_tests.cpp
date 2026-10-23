@@ -3600,6 +3600,17 @@ std::vector<float> quarterRateIsp(size_t n, float amp = 1.0f)
     return v;
 }
 
+//! Raised-cosine fade in/out, so that the abrupt start/end does not ring (a real overshoot)
+std::vector<float> faded(std::vector<float> v, size_t len = 2000)
+{
+    for (size_t i = 0; i < len && i < v.size(); ++i) {
+        const float g = float(0.5 - 0.5 * std::cos(M_PI * double(i) / double(len)));
+        v[i] *= g;
+        v[v.size() - 1 - i] *= g;
+    }
+    return v;
+}
+
 double truePeakDb(const std::vector<std::vector<float> >& ch, size_t factor = 4, size_t taps = 64)
 {
     TruePeakMeter m(ch.size(), factor, taps);
@@ -3647,7 +3658,7 @@ LimitResult runLimiter(std::vector<std::vector<float> > in, double rate, double 
 
 TEST(TruePeak, MeterFindsTheIntersamplePeakThatSamplePeakMisses)
 {
-    const auto x = quarterRateIsp(48000);
+    const auto x = faded(quarterRateIsp(48000));
     float samplePeak = 0;
     for (float v : x) {
         samplePeak = std::max(samplePeak, std::fabs(v));
@@ -3758,7 +3769,7 @@ TEST(TruePeak, LimiterIsTransparentBelowTheCeilingAndDelaysByItsLatency)
 TEST(TruePeak, LimiterReleasesBackToUnityGain)
 {
     const double rate = 48000;
-    std::vector<float> x(size_t(rate), 0.1f);
+    std::vector<float> x(size_t(2 * rate), 0.1f);
     for (size_t i = 1000; i < 1010; ++i) {
         x[i] = 2.0f; // short burst needing -7 dB
     }
@@ -3850,7 +3861,8 @@ TEST_F(Au3RecordTests, TruePeakLimiterOnMasterKeepsTheExportUnderTheCeilingWithL
 
     addEffect(RealtimeEffectList::Get(projectRef()), kTruePeakId);
     const auto limited = renderMix(projectRef(), rate, 1.1);
-    ASSERT_EQ(limited.size(), direct.size());
+    // the limiter's tail (its latency) may extend the render; compare the common part
+    ASSERT_GE(limited.size(), direct.size());
     EXPECT_LE(truePeakDb({ limited }), -1.0);
     EXPECT_GT(truePeakDb({ limited }), -1.3);
 
@@ -3891,7 +3903,7 @@ TEST(GainStaging, MeasuresPeakTruePeakRmsAndLoudness)
     EXPECT_NEAR(l.lufs, -9.03, 0.3);
 
     // the inter-sample peak signal: true peak 3 dB above the sample peak
-    const auto isp = gst::measure({ quarterRateIsp(size_t(rate)) }, rate);
+    const auto isp = gst::measure({ faded(quarterRateIsp(size_t(rate))) }, rate);
     EXPECT_NEAR(isp.peakDb, 0.0, 0.01);
     EXPECT_NEAR(isp.truePeakDb, 3.01, 0.03);
 
@@ -3940,7 +3952,7 @@ TEST_F(Au3RecordTests, InputTrimIsAppliedBeforeEffectsSavedAndUndoable)
     EXPECT_NEAR(all.at(0).volumeDb, 0.0, 1e-6);
 
     // pre-effects: the true-peak limiter on the track sees the trimmed signal
-    auto hotTone = quarterRateIsp(size_t(rate), 0.5f); // +3 - 6 = -3 dBTP, +6 dB trim -> +3 dBTP
+    auto hotTone = faded(quarterRateIsp(size_t(rate), 0.5f)); // +3 - 6 = -3 dBTP, +6 dB trim -> +3 dBTP
     Au3WaveTrack* hot = addSelectedMonoTrack();
     hot->Append(0, reinterpret_cast<constSamplePtr>(hotTone.data()), floatSample, hotTone.size());
     hot->Flush();

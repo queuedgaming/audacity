@@ -96,6 +96,11 @@ float StretchingSequence::GetChannelVolume(int channel) const
     return mSequence.GetChannelVolume(channel);
 }
 
+float StretchingSequence::GetInputTrim() const
+{
+    return mSequence.GetInputTrim();
+}
+
 bool StretchingSequence::DoGet(
     size_t iChannel, size_t nBuffers, const samplePtr buffers[],
     sampleFormat format, sampleCount start, size_t len, bool backwards,
