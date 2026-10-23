@@ -52,8 +52,9 @@ bool Au3GainStagingInteraction::setTrim(trackedit::TrackId trackId, double db, b
         projectHistory()->pushHistoryState(muse::trc("automation", "Changed input trim"),
                                            muse::trc("automation", "Input trim"));
         notifyTrack(trackId);
+        // not while dragging: listeners (the mixer) rebuild their strips on change
+        m_changed.notify();
     }
-    m_changed.notify();
     return true;
 }
 
