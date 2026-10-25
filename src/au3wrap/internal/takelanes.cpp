@@ -428,7 +428,7 @@ bool continuesSeamlessly(const WaveTrack::Interval& left, const WaveTrack::Inter
     std::vector<float> x(n), y(n);
     for (size_t ch = 0; ch < clip.NChannels(); ++ch) {
         left.GetSampleView(ch, left.GetVisibleSampleCount(), n, false).Copy(x.data(), n);
-        clip.GetSampleView(ch, 0, n, false).Copy(y.data(), n);
+        clip.GetSampleView(ch, sampleCount { 0 }, n, false).Copy(y.data(), n);
         if (x != y) {
             return false;
         }
