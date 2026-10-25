@@ -31,7 +31,6 @@
    SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#ifdef HAVE_CONFIG_H
 /* MSVC has no C99 variable-length arrays */
 #if defined(_MSC_VER)
 #include <malloc.h>
@@ -40,6 +39,8 @@
 #include <alloca.h>
 #define RNN_ALLOCA(sz) alloca(sz)
 #endif
+
+#ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
 
