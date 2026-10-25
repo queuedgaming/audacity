@@ -26,6 +26,14 @@
 */
 
 #ifdef HAVE_CONFIG_H
+/* MSVC has no C99 variable-length arrays */
+#if defined(_MSC_VER)
+#include <malloc.h>
+#define RNN_ALLOCA(sz) _alloca(sz)
+#else
+#include <alloca.h>
+#define RNN_ALLOCA(sz) alloca(sz)
+#endif
 #include "config.h"
 #endif
 
@@ -101,7 +109,7 @@ int rnn_autocorr(
    int fastN=n-lag;
    int shift;
    const opus_val16 *xptr;
-   opus_val16 xx[n];
+   opus_val16 *xx = (opus_val16*)RNN_ALLOCA(sizeof(opus_val16)*(n));
    celt_assert(n>0);
    celt_assert(overlap>=0);
    if (overlap == 0)
